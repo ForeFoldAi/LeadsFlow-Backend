@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsArray, IsInt, Min, Max } from 'class-validator';
+import { IsOptional, IsString, IsArray, IsInt, Min, Max, IsIn } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class GetLeadsQueryDto {
@@ -26,6 +26,13 @@ export class GetLeadsQueryDto {
   @IsOptional()
   @IsString()
   city?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['overdue', 'due_soon', 'future'], {
+    message: 'followupDateFilter must be one of: overdue, due_soon, future',
+  })
+  followupDateFilter?: 'overdue' | 'due_soon' | 'future';
 
   @IsOptional()
   @Type(() => Number)

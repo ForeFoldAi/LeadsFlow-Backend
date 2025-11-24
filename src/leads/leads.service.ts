@@ -134,6 +134,38 @@ export class LeadsService {
         );
       }
 
+      // Next Followup Date filter
+      if (query.followupDateFilter) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        if (query.followupDateFilter === 'overdue') {
+          // Overdue: nextFollowupDate <= yesterday (and not converted)
+          const yesterday = new Date(today.getTime() - 1);
+          queryBuilder = queryBuilder
+            .andWhere('lead.nextFollowupDate IS NOT NULL')
+            .andWhere('lead.nextFollowupDate <= :yesterday', { yesterday })
+            .andWhere('lead.leadStatus != :converted', { converted: LeadStatus.CONVERTED });
+        } else if (query.followupDateFilter === 'due_soon') {
+          // Due Soon: nextFollowupDate BETWEEN today AND weekEnd (next 7 days)
+          const weekEnd = new Date(today);
+          weekEnd.setDate(today.getDate() + 7);
+          weekEnd.setHours(23, 59, 59, 999);
+          queryBuilder = queryBuilder
+            .andWhere('lead.nextFollowupDate IS NOT NULL')
+            .andWhere('lead.nextFollowupDate >= :today', { today })
+            .andWhere('lead.nextFollowupDate <= :weekEnd', { weekEnd });
+        } else if (query.followupDateFilter === 'future') {
+          // Future: nextFollowupDate >= weekEnd (beyond 7 days)
+          const weekEnd = new Date(today);
+          weekEnd.setDate(today.getDate() + 7);
+          weekEnd.setHours(23, 59, 59, 999);
+          queryBuilder = queryBuilder
+            .andWhere('lead.nextFollowupDate IS NOT NULL')
+            .andWhere('lead.nextFollowupDate >= :weekEnd', { weekEnd });
+        }
+      }
+
       // Order by created date (newest first)
       queryBuilder = queryBuilder.orderBy('lead.createdAt', 'DESC');
 
