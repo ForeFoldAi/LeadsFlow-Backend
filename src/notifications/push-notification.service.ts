@@ -274,7 +274,7 @@ export class PushNotificationService {
       title: '🎯 New Lead Added',
       body: `${leadName} has been added to your leads`,
       icon: '/logo.png',
-      clickAction: `/leads/${leadId}`,
+      clickAction: 'https://leadsflowforefoldai.com',
       data: {
         type: 'new_lead',
         leadId: leadId.toString(),
@@ -303,7 +303,7 @@ export class PushNotificationService {
       title: '⏰ Follow-up Reminder',
       body: `Follow-up with ${leadName} is scheduled for today`,
       icon: '/logo.png',
-      clickAction: `/leads/${leadId}`,
+      clickAction: 'https://leadsflowforefoldai.com',
       data: {
         type: 'follow_up',
         leadId: leadId.toString(),
