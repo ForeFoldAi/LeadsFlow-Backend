@@ -1,8 +1,24 @@
-import { IsString, IsNotEmpty } from 'class-validator';
+import { IsString, IsNotEmpty, IsObject, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
-export class SaveFcmTokenDto {
+class PushSubscriptionKeysDto {
   @IsString()
   @IsNotEmpty()
-  token: string;
+  p256dh: string;
+
+  @IsString()
+  @IsNotEmpty()
+  auth: string;
+}
+
+export class SavePushSubscriptionDto {
+  @IsString()
+  @IsNotEmpty()
+  endpoint: string;
+
+  @IsObject()
+  @ValidateNested()
+  @Type(() => PushSubscriptionKeysDto)
+  keys: PushSubscriptionKeysDto;
 }
 

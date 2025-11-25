@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsController } from './notifications.controller';
-import { FirebaseService } from './firebase.service';
+import { WebPushService } from './web-push.service';
 import { PushNotificationService } from './push-notification.service';
 import { NotificationSettings } from '../entities/notification-settings.entity';
 import { AuthModule } from '../auth/auth.module';
@@ -12,8 +12,8 @@ import { AuthModule } from '../auth/auth.module';
     AuthModule, // Import AuthModule to use TokenAuthGuard
   ],
   controllers: [NotificationsController],
-  providers: [FirebaseService, PushNotificationService],
-  exports: [PushNotificationService, FirebaseService],
+  providers: [WebPushService, PushNotificationService],
+  exports: [PushNotificationService, WebPushService],
 })
 export class NotificationsModule {}
 

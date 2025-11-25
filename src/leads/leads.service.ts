@@ -803,6 +803,8 @@ export class LeadsService {
       emailNotifications: settings.emailNotifications,
       newLeads: settings.newLeads,
       followUps: settings.followUps,
+      browserPush: settings.browserPush,
+      hasPushToken: !!settings.pushSubscription,
     });
 
     // Check if email notifications and new leads notifications are enabled
@@ -812,6 +814,32 @@ export class LeadsService {
       console.log(`❌ Notifications disabled for user ${userIdStr}: emailNotifications=${settings.emailNotifications}, newLeads=${settings.newLeads}`);
     } else {
       console.log(`✅ Notifications enabled for user ${userIdStr}`);
+    }
+    
+    return isEnabled;
+  }
+
+  // Helper method to check if user has browser push notifications enabled and configured
+  private async shouldSendBrowserPushNotification(userId: number | string): Promise<boolean> {
+    // Convert userId to string (handles both number and UUID string)
+    const userIdStr = typeof userId === 'number' ? userId.toString() : userId;
+    
+    const settings = await this.notificationSettingsRepository.findOne({
+      where: { userId: userIdStr },
+    });
+
+    if (!settings) {
+      console.log(`⏭️  [BROWSER PUSH] No notification settings found for user ${userIdStr}`);
+      return false;
+    }
+
+    // Check if browser push is enabled and user has a valid token
+    const isEnabled = settings.browserPush && !!settings.pushSubscription;
+    
+    if (!isEnabled) {
+      console.log(`⏭️  [BROWSER PUSH] Browser push disabled or no token for user ${userIdStr}: browserPush=${settings.browserPush}, hasToken=${!!settings.pushSubscription}`);
+    } else {
+      console.log(`✅ [BROWSER PUSH] Browser push enabled for user ${userIdStr}`);
     }
     
     return isEnabled;
@@ -909,14 +937,26 @@ export class LeadsService {
           );
           console.log(`✅ Email sent successfully to ${user.email}`);
           
-          // Send push notification (non-blocking)
-          this.pushNotificationService.sendNewLeadNotification(
-            userId.toString(),
-            lead.name,
-            lead.id as any,
-          ).catch(error => {
-            console.error(`❌ Failed to send push notification to user ${userId}:`, error);
-          });
+          // Check if browser push is enabled before sending push notification
+          const shouldSendPush = await this.shouldSendBrowserPushNotification(userId);
+          if (shouldSendPush) {
+            // Send push notification (non-blocking)
+            this.pushNotificationService.sendNewLeadNotification(
+              userId.toString(),
+              lead.name,
+              lead.id as any,
+            ).then(success => {
+              if (success) {
+                console.log(`✅ Browser push notification sent successfully to user ${userId}`);
+              } else {
+                console.log(`⚠️  Browser push notification failed for user ${userId} (check logs above)`);
+              }
+            }).catch(error => {
+              console.error(`❌ Error sending browser push notification to user ${userId}:`, error);
+            });
+          } else {
+            console.log(`⏭️  Skipping browser push notification for user ${userId} (browser push not enabled or no token)`);
+          }
           
           // Add delay before sending next email (except for the last one)
           if (i < users.length - 1) {
@@ -1022,15 +1062,27 @@ export class LeadsService {
           );
           console.log(`   ✅ Email sent successfully to ${user.email}`);
           
-          // Send push notification (non-blocking)
-          this.pushNotificationService.sendFollowUpNotification(
-            userId.toString(),
-            lead.name,
-            lead.id as any,
-            lead.nextFollowupDate,
-          ).catch(error => {
-            console.error(`   ❌ Failed to send push notification to user ${userId}:`, error);
-          });
+          // Check if browser push is enabled before sending push notification
+          const shouldSendPush = await this.shouldSendBrowserPushNotification(userId);
+          if (shouldSendPush) {
+            // Send push notification (non-blocking)
+            this.pushNotificationService.sendFollowUpNotification(
+              userId.toString(),
+              lead.name,
+              lead.id as any,
+              lead.nextFollowupDate,
+            ).then(success => {
+              if (success) {
+                console.log(`   ✅ Browser push notification sent successfully to user ${userId}`);
+              } else {
+                console.log(`   ⚠️  Browser push notification failed for user ${userId} (check logs above)`);
+              }
+            }).catch(error => {
+              console.error(`   ❌ Error sending browser push notification to user ${userId}:`, error);
+            });
+          } else {
+            console.log(`   ⏭️  Skipping browser push notification for user ${userId} (browser push not enabled or no token)`);
+          }
           
           sent++;
 
@@ -1140,6 +1192,29 @@ export class LeadsService {
           lead.additionalNotes,
         );
         console.log(`✅ Email sent successfully to ${user.email}`);
+        
+        // Check if browser push is enabled before sending push notification
+        const shouldSendPush = await this.shouldSendBrowserPushNotification(userIdToCheck);
+        if (shouldSendPush) {
+          // Send push notification (non-blocking)
+          this.pushNotificationService.sendFollowUpNotification(
+            userIdToCheck.toString(),
+            lead.name,
+            lead.id as any,
+            lead.nextFollowupDate,
+          ).then(success => {
+            if (success) {
+              console.log(`✅ Browser push notification sent successfully to user ${userIdToCheck}`);
+            } else {
+              console.log(`⚠️  Browser push notification failed for user ${userIdToCheck} (check logs above)`);
+            }
+          }).catch(error => {
+            console.error(`❌ Error sending browser push notification to user ${userIdToCheck}:`, error);
+          });
+        } else {
+          console.log(`⏭️  Skipping browser push notification for user ${userIdToCheck} (browser push not enabled or no token)`);
+        }
+        
         sent++;
 
         // Add delay before sending next email (except for the last one)

@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { FirebaseService } from './firebase.service';
+import { ConfigService } from '@nestjs/config';
+import { WebPushService } from './web-push.service';
 import { NotificationSettings } from '../entities/notification-settings.entity';
-import * as admin from 'firebase-admin';
+import * as webpush from 'web-push';
 
 export interface PushNotificationPayload {
   title: string;
@@ -16,10 +17,32 @@ export interface PushNotificationPayload {
 @Injectable()
 export class PushNotificationService {
   constructor(
-    private firebaseService: FirebaseService,
+    private webPushService: WebPushService,
+    private configService: ConfigService,
     @InjectRepository(NotificationSettings)
     private notificationSettingsRepository: Repository<NotificationSettings>,
   ) {}
+
+  /**
+   * Convert relative URL to absolute URL
+   */
+  private getAbsoluteUrl(url: string): string {
+    // If already absolute, return as is
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+
+    // Get frontend URL from config or use default
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'https://leadsflowforefoldai.com';
+    
+    // Remove trailing slash from frontend URL
+    const baseUrl = frontendUrl.replace(/\/$/, '');
+    
+    // Ensure URL starts with /
+    const path = url.startsWith('/') ? url : `/${url}`;
+    
+    return `${baseUrl}${path}`;
+  }
 
   /**
    * Send push notification to a specific user
@@ -31,12 +54,12 @@ export class PushNotificationService {
     console.log(`   Click Action: ${payload.clickAction || '/'}`);
     
     try {
-      // Check if Firebase is initialized
-      if (!this.firebaseService.isInitialized()) {
-        console.log(`❌ [PUSH NOTIFICATION] Firebase not initialized. Skipping push notification for user ${userId}.`);
+      // Check if Web Push is initialized
+      if (!this.webPushService.isInitialized()) {
+        console.log(`❌ [PUSH NOTIFICATION] Web Push not initialized. Skipping push notification for user ${userId}.`);
         return false;
       }
-      console.log(`✓ [PUSH NOTIFICATION] Firebase is initialized`);
+      console.log(`✓ [PUSH NOTIFICATION] Web Push is initialized`);
 
       // Get user's notification settings
       const settings = await this.notificationSettingsRepository.findOne({
@@ -56,73 +79,72 @@ export class PushNotificationService {
       }
       console.log(`✓ [PUSH NOTIFICATION] Browser push enabled for user ${userId}`);
 
-      // Check if user has a push subscription token
+      // Check if user has a push subscription
       if (!settings.pushSubscription) {
-        console.log(`⏭️  [PUSH NOTIFICATION] No push subscription token for user ${userId}`);
+        console.log(`⏭️  [PUSH NOTIFICATION] No push subscription for user ${userId}`);
         return false;
       }
 
-      // Parse the subscription (it might be a JSON string or just the token)
-      let token: string;
+      // Parse the subscription (it should be a JSON string with web-push subscription object)
+      let subscription: webpush.PushSubscription;
       try {
-        const parsed = JSON.parse(settings.pushSubscription);
-        token = parsed.token || parsed.fcmToken || settings.pushSubscription;
-        console.log(`✓ [PUSH NOTIFICATION] FCM token parsed from JSON for user ${userId}`);
-      } catch {
-        token = settings.pushSubscription;
-        console.log(`✓ [PUSH NOTIFICATION] Using raw FCM token for user ${userId}`);
-      }
-      console.log(`   Token: ${token.substring(0, 20)}...${token.substring(token.length - 20)}`);
-
-      // Send notification via Firebase Cloud Messaging
-      const messaging = this.firebaseService.getMessaging();
-      if (!messaging) {
-        console.log(`❌ [PUSH NOTIFICATION] Firebase messaging not available for user ${userId}`);
+        subscription = JSON.parse(settings.pushSubscription);
+        console.log(`✓ [PUSH NOTIFICATION] Web Push subscription parsed from JSON for user ${userId}`);
+      } catch (error) {
+        // Check if it's an old FCM token format (plain string)
+        const subscriptionStr = settings.pushSubscription.trim();
+        if (!subscriptionStr.startsWith('{') && !subscriptionStr.startsWith('[')) {
+          console.log(`⚠️  [PUSH NOTIFICATION] Old FCM token format detected for user ${userId}`);
+          console.log(`   The stored subscription appears to be an old Firebase token.`);
+          console.log(`   Clearing old subscription. User needs to re-subscribe with web-push.`);
+          // Clear the old subscription
+          await this.clearPushSubscription(userId);
+          return false;
+        }
+        console.log(`❌ [PUSH NOTIFICATION] Invalid subscription format for user ${userId}`);
+        console.log(`   Error: ${error.message}`);
+        console.log(`   Subscription preview: ${settings.pushSubscription.substring(0, 50)}...`);
         return false;
       }
-      console.log(`✓ [PUSH NOTIFICATION] Firebase messaging service ready`);
 
-      const message: admin.messaging.Message = {
-        token,
-        notification: {
-          title: payload.title,
-          body: payload.body,
-        },
+      // Validate subscription object
+      if (!subscription.endpoint || !subscription.keys) {
+        console.log(`❌ [PUSH NOTIFICATION] Invalid subscription object for user ${userId}`);
+        console.log(`   Missing endpoint or keys. Clearing invalid subscription.`);
+        await this.clearPushSubscription(userId);
+        return false;
+      }
+
+      // Convert click action to absolute URL
+      const clickUrl = this.getAbsoluteUrl(payload.clickAction || '/');
+      
+      // Create notification payload
+      const notificationPayload = JSON.stringify({
+        title: payload.title,
+        body: payload.body,
+        icon: payload.icon || '/logo.png',
+        badge: '/logo.png',
+        tag: 'lead-notification',
+        requireInteraction: true,
         data: {
-          clickAction: payload.clickAction || '/',
+          url: clickUrl,
           ...payload.data,
         },
-        webpush: {
-          fcmOptions: {
-            link: payload.clickAction || '/',
-          },
-          notification: {
-            title: payload.title,
-            body: payload.body,
-            icon: payload.icon,
-            requireInteraction: true,
-            tag: 'lead-notification',
-          },
-        },
-      };
+      });
 
-      console.log(`📤 [PUSH NOTIFICATION] Sending message via FCM...`);
-      const response = await messaging.send(message);
+      console.log(`📤 [PUSH NOTIFICATION] Sending message via Web Push...`);
+      await this.webPushService.sendNotification(subscription, notificationPayload);
       console.log(`✅ [PUSH NOTIFICATION] Push notification sent successfully to user ${userId}`);
-      console.log(`   FCM Response: ${response}`);
       return true;
     } catch (error) {
-      // Handle invalid token errors
-      if (error.code === 'messaging/invalid-registration-token' || 
-          error.code === 'messaging/registration-token-not-registered') {
-        console.log(`⚠️  [PUSH NOTIFICATION] Invalid FCM token for user ${userId}. Clearing token.`);
-        console.log(`   Error Code: ${error.code}`);
-        // Clear invalid token
+      // Handle invalid subscription errors
+      if (error.message === 'INVALID_SUBSCRIPTION') {
+        console.log(`⚠️  [PUSH NOTIFICATION] Invalid subscription for user ${userId}. Clearing subscription.`);
+        // Clear invalid subscription
         await this.clearPushSubscription(userId);
       } else {
         console.error(`❌ [PUSH NOTIFICATION] Failed to send push notification to user ${userId}`);
         console.error(`   Error: ${error.message}`);
-        console.error(`   Error Code: ${error.code || 'N/A'}`);
       }
       return false;
     }
@@ -161,11 +183,37 @@ export class PushNotificationService {
   }
 
   /**
-   * Save or update user's FCM token
+   * Save or update user's Web Push subscription
    */
-  async savePushSubscription(userId: string, token: string): Promise<void> {
-    console.log(`\n💾 [PUSH SUBSCRIPTION] Saving FCM token for user ${userId}`);
-    console.log(`   Token: ${token.substring(0, 20)}...${token.substring(token.length - 20)}`);
+  async savePushSubscription(userId: string, subscription: string | webpush.PushSubscription): Promise<void> {
+    console.log(`\n💾 [PUSH SUBSCRIPTION] Saving Web Push subscription for user ${userId}`);
+    
+    // Ensure subscription is a JSON string
+    const subscriptionJson = typeof subscription === 'string' 
+      ? subscription 
+      : JSON.stringify(subscription);
+    
+    // Validate subscription format
+    try {
+      const parsed = JSON.parse(subscriptionJson);
+      if (!parsed.endpoint) {
+        throw new Error('Missing endpoint in subscription');
+      }
+      if (!parsed.keys) {
+        throw new Error('Missing keys in subscription');
+      }
+      if (!parsed.keys.p256dh) {
+        throw new Error('Missing p256dh key in subscription');
+      }
+      if (!parsed.keys.auth) {
+        throw new Error('Missing auth key in subscription');
+      }
+      console.log(`   Endpoint: ${parsed.endpoint.substring(0, 50)}...`);
+      console.log(`   Keys present: p256dh=${!!parsed.keys.p256dh}, auth=${!!parsed.keys.auth}`);
+    } catch (error) {
+      console.error(`❌ [PUSH SUBSCRIPTION] Invalid subscription format: ${error.message}`);
+      throw new Error(`Invalid push subscription format: ${error.message}`);
+    }
     
     let settings = await this.notificationSettingsRepository.findOne({
       where: { userId },
@@ -176,12 +224,12 @@ export class PushNotificationService {
       settings = this.notificationSettingsRepository.create({
         userId,
         browserPush: true, // Enable by default when user subscribes
-        pushSubscription: token,
+        pushSubscription: subscriptionJson,
       });
     } else {
       console.log(`   Updating existing notification settings for user ${userId}`);
-      settings.pushSubscription = token;
-      settings.browserPush = true; // Enable when updating token
+      settings.pushSubscription = subscriptionJson;
+      settings.browserPush = true; // Enable when updating subscription
     }
 
     await this.notificationSettingsRepository.save(settings);
@@ -190,10 +238,10 @@ export class PushNotificationService {
   }
 
   /**
-   * Clear user's FCM token
+   * Clear user's Web Push subscription
    */
   async clearPushSubscription(userId: string): Promise<void> {
-    console.log(`\n🗑️  [PUSH SUBSCRIPTION] Clearing FCM token for user ${userId}`);
+    console.log(`\n🗑️  [PUSH SUBSCRIPTION] Clearing Web Push subscription for user ${userId}`);
     
     const settings = await this.notificationSettingsRepository.findOne({
       where: { userId },
@@ -265,6 +313,82 @@ export class PushNotificationService {
   }
 
   /**
+   * Get notification diagnostics for a user
+   */
+  async getNotificationDiagnostics(userId: string): Promise<{
+    webPushInitialized: boolean;
+    hasNotificationSettings: boolean;
+    browserPushEnabled: boolean;
+    hasPushSubscription: boolean;
+    subscriptionPreview?: string;
+    issues: string[];
+  }> {
+    const diagnostics = {
+      webPushInitialized: false,
+      hasNotificationSettings: false,
+      browserPushEnabled: false,
+      hasPushSubscription: false,
+      subscriptionPreview: undefined as string | undefined,
+      issues: [] as string[],
+    };
+
+    // Check Web Push initialization
+    diagnostics.webPushInitialized = this.webPushService.isInitialized();
+    if (!diagnostics.webPushInitialized) {
+      diagnostics.issues.push('Web Push is not initialized. Check VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT environment variables.');
+    }
+
+    // Check notification settings
+    const settings = await this.notificationSettingsRepository.findOne({
+      where: { userId },
+    });
+
+    if (!settings) {
+      diagnostics.issues.push('No notification settings found. User needs to subscribe first.');
+      return diagnostics;
+    }
+
+    diagnostics.hasNotificationSettings = true;
+    diagnostics.browserPushEnabled = settings.browserPush || false;
+    diagnostics.hasPushSubscription = !!settings.pushSubscription;
+
+    if (settings.pushSubscription) {
+      try {
+        const parsed = JSON.parse(settings.pushSubscription);
+        if (parsed.endpoint) {
+          diagnostics.subscriptionPreview = `${parsed.endpoint.substring(0, 30)}...`;
+          
+          // Validate subscription format
+          if (!parsed.keys || !parsed.keys.p256dh || !parsed.keys.auth) {
+            diagnostics.issues.push('Push subscription is missing required keys (p256dh or auth). Please re-subscribe.');
+          }
+        } else {
+          diagnostics.issues.push('Push subscription is missing endpoint. Please re-subscribe.');
+        }
+      } catch (error) {
+        // Check if it's an old FCM token format
+        const subscriptionStr = settings.pushSubscription.trim();
+        if (!subscriptionStr.startsWith('{') && !subscriptionStr.startsWith('[')) {
+          diagnostics.issues.push('Old FCM token format detected. Please re-subscribe with web-push subscription.');
+        } else {
+          diagnostics.issues.push('Push subscription has invalid JSON format. Please re-subscribe.');
+        }
+        diagnostics.subscriptionPreview = settings.pushSubscription.substring(0, 30) + '...';
+      }
+    }
+
+    if (!diagnostics.browserPushEnabled) {
+      diagnostics.issues.push('Browser push is disabled. Enable it in notification settings.');
+    }
+
+    if (!diagnostics.hasPushSubscription) {
+      diagnostics.issues.push('No push subscription found. User needs to subscribe to push notifications from the frontend.');
+    }
+
+    return diagnostics;
+  }
+
+  /**
    * Send daily summary notification
    */
   async sendDailySummaryNotification(
@@ -286,7 +410,7 @@ export class PushNotificationService {
       title: '📊 Daily Lead Summary',
       body,
       icon: '/logo.png',
-      clickAction: '/dashboard',
+      clickAction: 'https://leadsflowforefoldai.com',
       data: {
         type: 'daily_summary',
         ...Object.fromEntries(
