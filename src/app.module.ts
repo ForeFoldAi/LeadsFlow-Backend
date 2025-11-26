@@ -37,21 +37,24 @@ import { UserPermissions } from './entities/user-permissions.entity';
           throw new Error('DATABASE_URL is not defined in environment variables');
         }
 
-        // Parse PostgreSQL connection URL
-        const urlPattern = /postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/;
+        // Parse PostgreSQL connection URL (supports both postgres:// and postgresql://)
+        const urlPattern = /postgres(ql)?:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\/(.+)/;
         const match = databaseUrl.match(urlPattern);
 
         if (!match) {
-          throw new Error('Invalid DATABASE_URL format');
+          throw new Error('Invalid DATABASE_URL format. Expected format: postgres://user:password@host:port/database');
         }
 
+        // Check if SSL should be enabled (default: false for local/dev, true for production)
+        const enableSsl = configService.get<string>('DATABASE_SSL') === 'true';
+        
         return {
           type: 'postgres',
-          host: match[3],
-          port: parseInt(match[4], 10),
-          username: match[1],
-          password: match[2],
-          database: match[5],
+          host: match[4],
+          port: parseInt(match[5], 10),
+          username: match[2],
+          password: match[3],
+          database: match[6],
           entities: [
             User,
             Token,
@@ -65,9 +68,12 @@ import { UserPermissions } from './entities/user-permissions.entity';
           ],
           synchronize: false, // Disabled - database already exists
           logging: process.env.NODE_ENV === 'development',
-          ssl: {
-            rejectUnauthorized: false, // For AWS RDS - accepts self-signed certificates
-          },
+          // Only enable SSL if explicitly configured
+          ...(enableSsl ? {
+            ssl: {
+              rejectUnauthorized: false, // For AWS RDS - accepts self-signed certificates
+            },
+          } : {}),
         };
       },
     }),
