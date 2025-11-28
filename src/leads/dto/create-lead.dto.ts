@@ -138,7 +138,7 @@ export class CreateLeadDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(100)
+  @MaxLength(200, { message: 'Additional notes cannot exceed 200 characters' })
   additionalNotes?: string;
 }
 

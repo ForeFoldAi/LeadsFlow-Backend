@@ -1232,6 +1232,96 @@ export class LeadsService {
     return { sent, skipped };
   }
 
+  async getDistinctCities(userId: number): Promise<string[]> {
+    try {
+      // Check if user is a sub-user
+      const userPermissions = await this.userPermissionsRepository.findOne({
+        where: { userId: userId.toString() },
+        relations: ['parentUser'],
+      });
+      
+      let effectiveUserId = userId;
+      let companyName: string | undefined;
+      let isSubUser = false;
+
+      if (userPermissions) {
+        // Sub-user: check permissions and get parent company
+        isSubUser = true;
+        if (!userPermissions.canViewLeads) {
+          throw new ForbiddenException('You do not have permission to view leads');
+        }
+        
+        // Use parent user from relation (already loaded)
+        const parentUser = userPermissions.parentUser;
+        
+        if (!parentUser) {
+          throw new NotFoundException(
+            `Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`
+          );
+        }
+        
+        if (!parentUser.isActive) {
+          throw new ForbiddenException('Your parent account is inactive. Please contact your administrator.');
+        }
+        
+        // Use parent user's ID (may be UUID string or number depending on DB schema)
+        effectiveUserId = parentUser.id as any;
+        companyName = parentUser.companyName;
+      } else {
+        // Regular user: get their company name for potential filtering
+        const user = await this.userRepository.findOne({
+          where: { id: userId },
+        });
+        if (!user) {
+          throw new NotFoundException('User not found');
+        }
+        companyName = user.companyName;
+      }
+
+      // Build query to get distinct cities
+      let queryBuilder = this.leadRepository
+        .createQueryBuilder('lead')
+        .leftJoin('lead.user', 'user')
+        .select('lead.city', 'city')
+        .where('lead.city IS NOT NULL')
+        .andWhere("lead.city != ''")
+        .groupBy('lead.city');
+
+      if (isSubUser) {
+        // Sub-user: see all cities from same company (including management user and other company members)
+        if (!companyName) {
+          // If no company name, fall back to showing only parent user's leads
+          queryBuilder = queryBuilder.andWhere('lead.user_id = :userId', { userId: effectiveUserId });
+        } else {
+          // Filter by company_name of the lead owner
+          queryBuilder = queryBuilder.andWhere(
+            '"user"."company_name" = :companyName',
+            { companyName },
+          );
+        }
+      } else {
+        // Regular user: see only their own leads
+        queryBuilder = queryBuilder.andWhere('lead.user_id = :userId', { userId });
+      }
+
+      const results = await queryBuilder
+        .orderBy('lead.city', 'ASC')
+        .getRawMany();
+
+      // Extract city values and filter out null/empty values
+      const cities = results
+        .map((result) => result.city)
+        .filter((city) => city && city.trim() !== '')
+        .sort();
+
+      return cities;
+    } catch (error) {
+      // Log error for debugging
+      console.error('Error in getDistinctCities:', error);
+      throw error;
+    }
+  }
+
   private mapToResponseDto(lead: Lead): LeadResponseDto {
     // Map user data if available
     const userData: UserResponseDto | undefined = lead.user

@@ -60,6 +60,14 @@ export class LeadsController {
     return this.leadsService.findAll(userId, query);
   }
 
+  @Get('cities')
+  @HttpCode(HttpStatus.OK)
+  async getCities(@Request() req): Promise<{ cities: string[] }> {
+    const userId = req.user.sub; // Get userId from authenticated user
+    const cities = await this.leadsService.getDistinctCities(userId);
+    return { cities };
+  }
+
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   async getLeadById(@Request() req, @Param('id') id: string): Promise<LeadResponseDto> {
