@@ -820,6 +820,7 @@ export class LeadsService {
   }
 
   // Helper method to check if user has browser push notifications enabled and configured
+  // Note: This only checks browserPush and token. The caller should also check the specific notification type (newLeads/followUps)
   private async shouldSendBrowserPushNotification(userId: number | string): Promise<boolean> {
     // Convert userId to string (handles both number and UUID string)
     const userIdStr = typeof userId === 'number' ? userId.toString() : userId;
@@ -921,50 +922,75 @@ export class LeadsService {
         const userId = user.id;
         console.log(`[${i + 1}/${users.length}] Checking notification settings for user ID: ${userId} (type: ${typeof userId}), email: ${user.email}`);
         
-        const shouldNotify = await this.shouldSendNewLeadNotification(userId);
+        // Get notification settings once
+        const userIdStr = typeof userId === 'number' ? userId.toString() : userId;
+        const settings = await this.notificationSettingsRepository.findOne({
+          where: { userId: userIdStr },
+        });
+
+        if (!settings) {
+          console.log(`⏭️  No notification settings found for user ${userIdStr}, skipping notifications`);
+          continue;
+        }
+
+        // Check if newLeads notifications are enabled (required for both email and push)
+        const newLeadsEnabled = settings.newLeads;
         
-        if (shouldNotify) {
-          console.log(`✓ Sending new lead notification to user ${userId} (${user.email}) for company ${companyName}`);
-          
-          // Send email notification
-          await this.emailService.sendNewLeadNotification(
-            user.email,
-            lead.name,
-            lead.email,
-            lead.phoneNumber,
-            lead.companyName,
-            createdByName,
-          );
-          console.log(`✅ Email sent successfully to ${user.email}`);
-          
-          // Check if browser push is enabled before sending push notification
-          const shouldSendPush = await this.shouldSendBrowserPushNotification(userId);
-          if (shouldSendPush) {
-            // Send push notification (non-blocking)
-            this.pushNotificationService.sendNewLeadNotification(
-              userId.toString(),
+        if (!newLeadsEnabled) {
+          console.log(`✗ Skipping all notifications for user ${userId} (${user.email}): newLeads disabled`);
+          continue;
+        }
+
+        let emailSent = false;
+
+        // Send email notification if email notifications are enabled
+        const shouldSendEmail = settings.emailNotifications && newLeadsEnabled;
+        if (shouldSendEmail) {
+          console.log(`✓ Sending email notification to user ${userId} (${user.email}) for company ${companyName}`);
+          try {
+            await this.emailService.sendNewLeadNotification(
+              user.email,
               lead.name,
-              lead.id as any,
-            ).then(success => {
-              if (success) {
-                console.log(`✅ Browser push notification sent successfully to user ${userId}`);
-              } else {
-                console.log(`⚠️  Browser push notification failed for user ${userId} (check logs above)`);
-              }
-            }).catch(error => {
-              console.error(`❌ Error sending browser push notification to user ${userId}:`, error);
-            });
-          } else {
-            console.log(`⏭️  Skipping browser push notification for user ${userId} (browser push not enabled or no token)`);
-          }
-          
-          // Add delay before sending next email (except for the last one)
-          if (i < users.length - 1) {
-            console.log(`⏳ Waiting ${EMAIL_DELAY_MS / 1000} seconds before sending next email...`);
-            await this.delay(EMAIL_DELAY_MS);
+              lead.email,
+              lead.phoneNumber,
+              lead.companyName,
+              createdByName,
+            );
+            console.log(`✅ Email sent successfully to ${user.email}`);
+            emailSent = true;
+          } catch (error) {
+            console.error(`❌ Error sending email to user ${userId}:`, error);
           }
         } else {
-          console.log(`✗ Skipping notification for user ${userId} (${user.email}): notifications disabled`);
+          console.log(`⏭️  Skipping email notification for user ${userId}: emailNotifications=${settings.emailNotifications}`);
+        }
+
+        // Send browser push notification if browser push is enabled (independent of email)
+        const shouldSendPush = settings.browserPush && newLeadsEnabled && !!settings.pushSubscription;
+        if (shouldSendPush) {
+          console.log(`✓ Sending browser push notification to user ${userId}`);
+          // Send push notification (non-blocking)
+          this.pushNotificationService.sendNewLeadNotification(
+            userId.toString(),
+            lead.name,
+            lead.id as any,
+          ).then(success => {
+            if (success) {
+              console.log(`✅ Browser push notification sent successfully to user ${userId}`);
+            } else {
+              console.log(`⚠️  Browser push notification failed for user ${userId} (check logs above)`);
+            }
+          }).catch(error => {
+            console.error(`❌ Error sending browser push notification to user ${userId}:`, error);
+          });
+        } else {
+          console.log(`⏭️  Skipping browser push notification for user ${userId}: browserPush=${settings.browserPush}, newLeads=${newLeadsEnabled}, hasToken=${!!settings.pushSubscription}`);
+        }
+        
+        // Add delay before sending next email (only if email was sent, to avoid bulk sending)
+        if (emailSent && i < users.length - 1) {
+          console.log(`⏳ Waiting ${EMAIL_DELAY_MS / 1000} seconds before sending next email...`);
+          await this.delay(EMAIL_DELAY_MS);
         }
       } catch (error) {
         console.error(`❌ Error sending notification to user ${user.id} (${user.email}):`, error);
