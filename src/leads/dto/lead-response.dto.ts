@@ -26,6 +26,8 @@ export class LeadResponseDto {
   leadStatus?: string;
   leadCreatedBy?: string;
   additionalNotes?: string;
+  sector?: string;
+  customSector?: string;
   userId: number;
   user?: UserResponseDto; // Include full user data
   createdAt?: Date;

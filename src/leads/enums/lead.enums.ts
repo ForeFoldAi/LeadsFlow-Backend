@@ -25,3 +25,8 @@ export enum LeadSource {
   OTHER = 'other',
 }
 
+export enum Sector {
+ 
+  OTHER = 'other',
+}
+

@@ -123,6 +123,17 @@ export class Lead {
   @Column({ name: 'additional_notes', type: 'text', nullable: true })
   additionalNotes?: string;
 
+  @Column({
+    name: 'sector',
+    type: 'varchar',
+    length: 50,
+    nullable: true,
+  })
+  sector?: string;
+
+  @Column({ name: 'custom_sector', type: 'varchar', length: 255, nullable: true })
+  customSector?: string;
+
   @Column({ name: 'user_id', type: 'integer' })
   userId: number; // Integer to match User.id
 

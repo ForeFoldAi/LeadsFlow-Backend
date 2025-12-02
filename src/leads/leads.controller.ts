@@ -23,6 +23,7 @@ import { PaginatedLeadsResponseDto } from './dto/paginated-leads-response.dto';
 import { ImportLeadsDto } from './dto/import-leads.dto';
 import { ImportLeadsResponseDto } from './dto/import-leads-response.dto';
 import { GetLeadsQueryDto } from './dto/get-leads-query.dto';
+import { AddCustomSectorDto } from './dto/add-custom-sector.dto';
 import { TokenAuthGuard } from '../auth/guards/token-auth.guard';
 
 @Controller('leads')
@@ -66,6 +67,20 @@ export class LeadsController {
     const userId = req.user.sub; // Get userId from authenticated user
     const cities = await this.leadsService.getDistinctCities(userId);
     return { cities };
+  }
+
+  @Get('sectors')
+  @HttpCode(HttpStatus.OK)
+  async getSectors(): Promise<{ sectors: string[] }> {
+    return this.leadsService.getAllSectors();
+  }
+
+  @Post('sectors')
+  @HttpCode(HttpStatus.CREATED)
+  async addCustomSector(
+    @Body(ValidationPipe) addCustomSectorDto: AddCustomSectorDto,
+  ): Promise<{ message: string; sector: string }> {
+    return this.leadsService.addCustomSector(addCustomSectorDto.sector);
   }
 
   @Get(':id')

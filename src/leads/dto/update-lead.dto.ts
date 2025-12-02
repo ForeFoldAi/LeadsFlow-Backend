@@ -143,5 +143,15 @@ export class UpdateLeadDto {
   @IsString()
   @MaxLength(200, { message: 'Additional notes cannot exceed 200 characters' })
   additionalNotes?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255, { message: 'Sector cannot exceed 255 characters' })
+  sector?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255, { message: 'Custom Sector cannot exceed 255 characters' })
+  customSector?: string;
 }
 

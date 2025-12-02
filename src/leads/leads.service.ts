@@ -9,10 +9,11 @@ import { GetLeadsQueryDto } from './dto/get-leads-query.dto';
 import { PaginatedLeadsResponseDto } from './dto/paginated-leads-response.dto';
 import { ImportLeadsResponseDto, ImportLeadResult } from './dto/import-leads-response.dto';
 import { UserResponseDto } from '../users/dto/user-response.dto';
-import { CustomerCategory, LeadStatus, LeadSource } from './enums/lead.enums';
+import { CustomerCategory, LeadStatus, LeadSource, Sector } from './enums/lead.enums';
 import { User } from '../entities/user.entity';
 import { UserPermissions } from '../entities/user-permissions.entity';
 import { NotificationSettings } from '../entities/notification-settings.entity';
+import { CustomSector } from '../entities/custom-sector.entity';
 import { EmailService } from '../auth/services/email.service';
 import { PushNotificationService } from '../notifications/push-notification.service';
 
@@ -27,6 +28,8 @@ export class LeadsService {
     private userPermissionsRepository: Repository<UserPermissions>,
     @InjectRepository(NotificationSettings)
     private notificationSettingsRepository: Repository<NotificationSettings>,
+    @InjectRepository(CustomSector)
+    private customSectorRepository: Repository<CustomSector>,
     private emailService: EmailService,
     private pushNotificationService: PushNotificationService,
   ) {}
@@ -122,6 +125,12 @@ export class LeadsService {
       if (query.city) {
         queryBuilder = queryBuilder.andWhere('LOWER(lead.city) LIKE LOWER(:city)', {
           city: `%${query.city}%`,
+        });
+      }
+
+      if (query.sector) {
+        queryBuilder = queryBuilder.andWhere('LOWER(lead.sector) LIKE LOWER(:sector)', {
+          sector: `%${query.sector}%`,
         });
       }
 
@@ -308,8 +317,15 @@ export class LeadsService {
       leadStatus: createLeadDto.leadStatus || LeadStatus.NEW,
       leadCreatedBy: createLeadDto.leadCreatedBy,
       additionalNotes: createLeadDto.additionalNotes,
+      sector: createLeadDto.sector,
+      customSector: createLeadDto.customSector,
       userId: effectiveUserId, // Use effective user ID (parent if sub-user)
     };
+
+    // If sector is provided, save it to custom_sectors table (if it's not already there)
+    if (createLeadDto.sector) {
+      await this.saveCustomSector(createLeadDto.sector);
+    }
 
     const lead = this.leadRepository.create(leadData);
     const savedLead = await this.leadRepository.save(lead);
@@ -436,6 +452,15 @@ export class LeadsService {
       updateData.leadCreatedBy = updateLeadDto.leadCreatedBy;
     if (updateLeadDto.additionalNotes !== undefined)
       updateData.additionalNotes = updateLeadDto.additionalNotes;
+    if (updateLeadDto.sector !== undefined)
+      updateData.sector = updateLeadDto.sector;
+    if (updateLeadDto.customSector !== undefined)
+      updateData.customSector = updateLeadDto.customSector;
+
+    // If sector is provided, save it to custom_sectors table (if it's not already there)
+    if (updateLeadDto.sector) {
+      await this.saveCustomSector(updateLeadDto.sector);
+    }
 
     // Update the lead
     await this.leadRepository.update({ id, userId: lead.userId }, updateData);
@@ -569,8 +594,15 @@ export class LeadsService {
           leadStatus: leadDto.leadStatus || LeadStatus.NEW,
           leadCreatedBy: leadDto.leadCreatedBy,
           additionalNotes: leadDto.additionalNotes,
+          sector: leadDto.sector,
+          customSector: leadDto.customSector,
           userId: effectiveUserId, // Use effective user ID (parent if sub-user)
         };
+
+        // If sector is provided, save it to custom_sectors table (if it's not already there)
+        if (leadDto.sector) {
+          await this.saveCustomSector(leadDto.sector);
+        }
 
         const lead = this.leadRepository.create(leadData);
         const savedLead = await this.leadRepository.save(lead);
@@ -665,6 +697,8 @@ export class LeadsService {
       'Lead Status',
       'Lead Created By',
       'Additional Notes',
+      'Sector',
+      'Custom Sector',
       'Created At',
       'Updated At',
     ];
@@ -717,6 +751,8 @@ export class LeadsService {
         escapeCsvValue(lead.leadStatus),
         escapeCsvValue(lead.leadCreatedBy),
         escapeCsvValue(lead.additionalNotes),
+        escapeCsvValue(lead.sector),
+        escapeCsvValue(lead.customSector),
         escapeCsvValue(lead.createdAt ? formatDate(lead.createdAt) : ''),
         escapeCsvValue(lead.updatedAt ? formatDate(lead.updatedAt) : ''),
       ];
@@ -1348,6 +1384,90 @@ export class LeadsService {
     }
   }
 
+  async getAllSectors(): Promise<{ sectors: string[] }> {
+    try {
+      // Get all custom sectors from database (no default sectors, only custom ones)
+      const customSectors = await this.customSectorRepository.find({
+        order: { sector: 'ASC' },
+      });
+
+      // Return only custom sectors
+      const sectors = customSectors.map((cs) => cs.sector);
+
+      return { sectors };
+    } catch (error) {
+      console.error('Error in getAllSectors:', error);
+      throw error;
+    }
+  }
+
+  async addCustomSector(sectorName: string): Promise<{ message: string; sector: string }> {
+    try {
+      const trimmedSectorName = sectorName.trim();
+
+      if (!trimmedSectorName) {
+        throw new BadRequestException('Sector name cannot be empty');
+      }
+
+      // Check if custom sector already exists (case-insensitive)
+      const existingSector = await this.customSectorRepository
+        .createQueryBuilder('customSector')
+        .where('LOWER(customSector.sector) = LOWER(:sector)', {
+          sector: trimmedSectorName,
+        })
+        .getOne();
+
+      if (existingSector) {
+        // Return existing sector instead of throwing error
+        return {
+          message: 'Sector already exists',
+          sector: existingSector.sector,
+        };
+      }
+
+      // Save new custom sector
+      const customSector = this.customSectorRepository.create({
+        sector: trimmedSectorName,
+      });
+      const savedSector = await this.customSectorRepository.save(customSector);
+
+      return {
+        message: 'Custom sector added successfully',
+        sector: savedSector.sector,
+      };
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      console.error(`Error adding custom sector "${sectorName}":`, error);
+      throw new BadRequestException(`Failed to add custom sector: ${error.message}`);
+    }
+  }
+
+  private async saveCustomSector(sectorName: string): Promise<void> {
+    try {
+      // Check if custom sector already exists (case-insensitive)
+      const existingSector = await this.customSectorRepository
+        .createQueryBuilder('customSector')
+        .where('LOWER(customSector.sector) = LOWER(:sector)', {
+          sector: sectorName,
+        })
+        .getOne();
+
+      if (!existingSector) {
+        // Save new custom sector
+        const customSector = this.customSectorRepository.create({
+          sector: sectorName.trim(),
+        });
+        await this.customSectorRepository.save(customSector);
+        console.log(`Saved new custom sector: ${sectorName}`);
+      }
+    } catch (error) {
+      // Log error but don't fail the lead creation/update
+      console.error(`Error saving custom sector "${sectorName}":`, error);
+    }
+  }
+
   private mapToResponseDto(lead: Lead): LeadResponseDto {
     // Map user data if available
     const userData: UserResponseDto | undefined = lead.user
@@ -1396,6 +1516,8 @@ export class LeadsService {
       leadStatus: lead.leadStatus,
       leadCreatedBy: lead.leadCreatedBy,
       additionalNotes: lead.additionalNotes,
+      sector: lead.sector,
+      customSector: lead.customSector,
       userId: lead.userId,
       user: userData, // Include full user data
       createdAt: lead.createdAt,

@@ -29,6 +29,10 @@ export class GetLeadsQueryDto {
 
   @IsOptional()
   @IsString()
+  sector?: string;
+
+  @IsOptional()
+  @IsString()
   @IsIn(['overdue', 'due_soon', 'future'], {
     message: 'followupDateFilter must be one of: overdue, due_soon, future',
   })

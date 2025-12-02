@@ -19,6 +19,7 @@ import { UserPreferences } from './entities/user-preferences.entity';
 import { NotificationSettings } from './entities/notification-settings.entity';
 import { SecuritySettings } from './entities/security-settings.entity';
 import { UserPermissions } from './entities/user-permissions.entity';
+import { CustomSector } from './entities/custom-sector.entity';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { UserPermissions } from './entities/user-permissions.entity';
             NotificationSettings,
             SecuritySettings,
             UserPermissions,
+            CustomSector,
           ],
           synchronize: false, // Disabled - database already exists
           logging: process.env.NODE_ENV === 'development',
