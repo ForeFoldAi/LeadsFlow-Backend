@@ -203,15 +203,21 @@ export class PushNotificationService {
    */
   async savePushSubscription(
     userId: string, 
-    subscription: string | webpush.PushSubscription,
+    subscription: string | webpush.PushSubscription | { endpoint: string; keys: { p256dh: string; auth: string } },
     deviceInfo?: string
   ): Promise<void> {
     console.log(`\n💾 [PUSH SUBSCRIPTION] Saving Web Push subscription for user ${userId}`);
     
-    // Ensure subscription is a JSON string
-    const subscriptionJson = typeof subscription === 'string' 
-      ? subscription 
-      : JSON.stringify(subscription);
+    // Convert subscription to JSON string
+    let subscriptionJson: string;
+    if (typeof subscription === 'string') {
+      subscriptionJson = subscription;
+    } else if ('endpoint' in subscription && 'keys' in subscription) {
+      // It's a subscription object (DTO or webpush.PushSubscription)
+      subscriptionJson = JSON.stringify(subscription);
+    } else {
+      throw new Error('Invalid subscription format');
+    }
     
     // Validate subscription format
     let parsed: webpush.PushSubscription;
