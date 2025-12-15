@@ -68,8 +68,8 @@ export class UpdateUserPreferencesDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['10', '20', '30', '40', '50'], {
-    message: 'Items Per Page must be one of: 10, 20, 30, 40, 50',
+  @IsIn(['10', '20', '30', '40', '50', '100'], {
+    message: 'Items Per Page must be one of: 10, 20, 30, 40, 50, 100',
   })
   itemsPerPage?: string;
 

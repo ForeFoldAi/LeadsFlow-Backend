@@ -394,10 +394,13 @@ export class EmailService {
     };
 
     try {
-      await this.transporter.sendMail(mailOptions);
+      const info = await this.transporter.sendMail(mailOptions);
+      console.log(`✅ Follow-up reminder email sent successfully to ${email}. MessageId: ${info.messageId}`);
+      return;
     } catch (error) {
-      console.error('Error sending follow-up reminder email:', error);
-      // Don't throw error - notification failures shouldn't break the system
+      console.error(`❌ Error sending follow-up reminder email to ${email}:`, error);
+      // Re-throw error so calling code can track failures properly
+      throw new Error(`Failed to send follow-up reminder email: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

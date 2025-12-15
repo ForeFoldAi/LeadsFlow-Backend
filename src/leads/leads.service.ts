@@ -1048,6 +1048,8 @@ export class LeadsService {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
+    console.log(`📅 Date range for follow-up reminders: ${today.toISOString()} to ${tomorrow.toISOString()}`);
+
     // Find all leads with follow-up dates today (using date range)
     const leads = await this.leadRepository
       .createQueryBuilder('lead')
@@ -1057,6 +1059,9 @@ export class LeadsService {
       .getMany();
 
     console.log(`📋 Found ${leads.length} leads with follow-up date today`);
+    if (leads.length > 0) {
+      console.log(`   Lead IDs: ${leads.map(l => `${l.id} (${l.name}, follow-up: ${l.nextFollowupDate})`).join(', ')}`);
+    }
 
     let sent = 0;
     let errors = 0;
@@ -1123,6 +1128,7 @@ export class LeadsService {
           // Send email notification if enabled
           if (shouldNotifyEmail) {
             console.log(`   ✓ Sending email follow-up reminder to user ${userId} (${user.email})`);
+            // Email errors will now be thrown and caught by outer catch block
             await this.emailService.sendFollowUpReminder(
               user.email,
               lead.name,
@@ -1133,6 +1139,7 @@ export class LeadsService {
               lead.additionalNotes,
             );
             console.log(`   ✅ Email sent successfully to ${user.email}`);
+            sent++; // Only increment if email was sent successfully (no error thrown)
           } else {
             console.log(`   ⏭️  Skipping email for user ${userId} (${user.email}): email notifications or follow-ups disabled`);
           }
@@ -1155,11 +1162,11 @@ export class LeadsService {
             }).catch(error => {
               console.error(`   ❌ Error sending browser push notification to user ${userId}:`, error);
             });
+            // Note: We don't increment sent for push notifications since they're async
+            // and we can't know immediately if they succeeded
           } else {
             console.log(`   ⏭️  Skipping browser push notification for user ${userId} (browser push not enabled)`);
           }
-          
-          sent++;
 
           // Add delay before sending next email (except for the last one)
           if (i < companyUsers.length - 1) {
