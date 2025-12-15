@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { WebPushService } from './web-push.service';
 import { NotificationSettings } from '../entities/notification-settings.entity';
+import { PushSubscription } from '../entities/push-subscription.entity';
 import * as webpush from 'web-push';
 
 export interface PushNotificationPayload {
@@ -21,6 +22,8 @@ export class PushNotificationService {
     private configService: ConfigService,
     @InjectRepository(NotificationSettings)
     private notificationSettingsRepository: Repository<NotificationSettings>,
+    @InjectRepository(PushSubscription)
+    private pushSubscriptionRepository: Repository<PushSubscription>,
   ) {}
 
   /**
@@ -45,7 +48,7 @@ export class PushNotificationService {
   }
 
   /**
-   * Send push notification to a specific user
+   * Send push notification to a specific user (sends to all their devices)
    */
   async sendToUser(userId: string, payload: PushNotificationPayload): Promise<boolean> {
     console.log(`\n🔔 [PUSH NOTIFICATION] Attempting to send to user: ${userId}`);
@@ -79,41 +82,16 @@ export class PushNotificationService {
       }
       console.log(`✓ [PUSH NOTIFICATION] Browser push enabled for user ${userId}`);
 
-      // Check if user has a push subscription
-      if (!settings.pushSubscription) {
-        console.log(`⏭️  [PUSH NOTIFICATION] No push subscription for user ${userId}`);
-        return false;
-      }
+      // Get all push subscriptions for this user
+      const subscriptions = await this.pushSubscriptionRepository.find({
+        where: { userId },
+      });
 
-      // Parse the subscription (it should be a JSON string with web-push subscription object)
-      let subscription: webpush.PushSubscription;
-      try {
-        subscription = JSON.parse(settings.pushSubscription);
-        console.log(`✓ [PUSH NOTIFICATION] Web Push subscription parsed from JSON for user ${userId}`);
-      } catch (error) {
-        // Check if it's an old FCM token format (plain string)
-        const subscriptionStr = settings.pushSubscription.trim();
-        if (!subscriptionStr.startsWith('{') && !subscriptionStr.startsWith('[')) {
-          console.log(`⚠️  [PUSH NOTIFICATION] Old FCM token format detected for user ${userId}`);
-          console.log(`   The stored subscription appears to be an old Firebase token.`);
-          console.log(`   Clearing old subscription. User needs to re-subscribe with web-push.`);
-          // Clear the old subscription
-          await this.clearPushSubscription(userId);
-          return false;
-        }
-        console.log(`❌ [PUSH NOTIFICATION] Invalid subscription format for user ${userId}`);
-        console.log(`   Error: ${error.message}`);
-        console.log(`   Subscription preview: ${settings.pushSubscription.substring(0, 50)}...`);
+      if (!subscriptions || subscriptions.length === 0) {
+        console.log(`⏭️  [PUSH NOTIFICATION] No push subscriptions found for user ${userId}`);
         return false;
       }
-
-      // Validate subscription object
-      if (!subscription.endpoint || !subscription.keys) {
-        console.log(`❌ [PUSH NOTIFICATION] Invalid subscription object for user ${userId}`);
-        console.log(`   Missing endpoint or keys. Clearing invalid subscription.`);
-        await this.clearPushSubscription(userId);
-        return false;
-      }
+      console.log(`✓ [PUSH NOTIFICATION] Found ${subscriptions.length} subscription(s) for user ${userId}`);
 
       // Convert click action to absolute URL
       const clickUrl = this.getAbsoluteUrl(payload.clickAction || '/');
@@ -132,20 +110,58 @@ export class PushNotificationService {
         },
       });
 
-      console.log(`📤 [PUSH NOTIFICATION] Sending message via Web Push...`);
-      await this.webPushService.sendNotification(subscription, notificationPayload);
-      console.log(`✅ [PUSH NOTIFICATION] Push notification sent successfully to user ${userId}`);
-      return true;
-    } catch (error) {
-      // Handle invalid subscription errors
-      if (error.message === 'INVALID_SUBSCRIPTION') {
-        console.log(`⚠️  [PUSH NOTIFICATION] Invalid subscription for user ${userId}. Clearing subscription.`);
-        // Clear invalid subscription
-        await this.clearPushSubscription(userId);
-      } else {
-        console.error(`❌ [PUSH NOTIFICATION] Failed to send push notification to user ${userId}`);
-        console.error(`   Error: ${error.message}`);
+      // Send to all subscriptions
+      let successCount = 0;
+      let failureCount = 0;
+
+      for (const subRecord of subscriptions) {
+        try {
+          // Parse the subscription
+          let subscription: webpush.PushSubscription;
+          try {
+            subscription = JSON.parse(subRecord.subscriptionData);
+          } catch (error) {
+            console.log(`⚠️  [PUSH NOTIFICATION] Invalid subscription format for endpoint ${subRecord.endpoint.substring(0, 50)}...`);
+            // Remove invalid subscription
+            await this.pushSubscriptionRepository.remove(subRecord);
+            failureCount++;
+            continue;
+          }
+
+          // Validate subscription object
+          if (!subscription.endpoint || !subscription.keys) {
+            console.log(`⚠️  [PUSH NOTIFICATION] Invalid subscription object for endpoint ${subRecord.endpoint.substring(0, 50)}...`);
+            // Remove invalid subscription
+            await this.pushSubscriptionRepository.remove(subRecord);
+            failureCount++;
+            continue;
+          }
+
+          console.log(`📤 [PUSH NOTIFICATION] Sending to device: ${subRecord.deviceInfo || 'unknown'} (${subRecord.endpoint.substring(0, 50)}...)`);
+          await this.webPushService.sendNotification(subscription, notificationPayload);
+          successCount++;
+          console.log(`✅ [PUSH NOTIFICATION] Sent successfully to device`);
+        } catch (error) {
+          // Handle invalid subscription errors
+          if (error.message === 'INVALID_SUBSCRIPTION') {
+            console.log(`⚠️  [PUSH NOTIFICATION] Invalid subscription for endpoint ${subRecord.endpoint.substring(0, 50)}... Removing.`);
+            await this.pushSubscriptionRepository.remove(subRecord);
+          } else {
+            console.error(`❌ [PUSH NOTIFICATION] Failed to send to device: ${error.message}`);
+          }
+          failureCount++;
+        }
       }
+
+      console.log(`\n📊 [PUSH NOTIFICATION] Results for user ${userId}:`);
+      console.log(`   ✅ Success: ${successCount}`);
+      console.log(`   ❌ Failure: ${failureCount}`);
+
+      // If we have at least one successful send, return true
+      return successCount > 0;
+    } catch (error) {
+      console.error(`❌ [PUSH NOTIFICATION] Failed to send push notification to user ${userId}`);
+      console.error(`   Error: ${error.message}`);
       return false;
     }
   }
@@ -183,9 +199,13 @@ export class PushNotificationService {
   }
 
   /**
-   * Save or update user's Web Push subscription
+   * Save or update user's Web Push subscription (supports multiple devices)
    */
-  async savePushSubscription(userId: string, subscription: string | webpush.PushSubscription): Promise<void> {
+  async savePushSubscription(
+    userId: string, 
+    subscription: string | webpush.PushSubscription,
+    deviceInfo?: string
+  ): Promise<void> {
     console.log(`\n💾 [PUSH SUBSCRIPTION] Saving Web Push subscription for user ${userId}`);
     
     // Ensure subscription is a JSON string
@@ -194,8 +214,9 @@ export class PushNotificationService {
       : JSON.stringify(subscription);
     
     // Validate subscription format
+    let parsed: webpush.PushSubscription;
     try {
-      const parsed = JSON.parse(subscriptionJson);
+      parsed = JSON.parse(subscriptionJson);
       if (!parsed.endpoint) {
         throw new Error('Missing endpoint in subscription');
       }
@@ -209,12 +230,40 @@ export class PushNotificationService {
         throw new Error('Missing auth key in subscription');
       }
       console.log(`   Endpoint: ${parsed.endpoint.substring(0, 50)}...`);
+      console.log(`   Device: ${deviceInfo || 'unknown'}`);
       console.log(`   Keys present: p256dh=${!!parsed.keys.p256dh}, auth=${!!parsed.keys.auth}`);
     } catch (error) {
       console.error(`❌ [PUSH SUBSCRIPTION] Invalid subscription format: ${error.message}`);
       throw new Error(`Invalid push subscription format: ${error.message}`);
     }
     
+    // Check if subscription already exists for this endpoint
+    let existingSub = await this.pushSubscriptionRepository.findOne({
+      where: { endpoint: parsed.endpoint },
+    });
+
+    if (existingSub) {
+      // Update existing subscription (in case keys changed or device info updated)
+      console.log(`   Updating existing subscription for endpoint`);
+      existingSub.subscriptionData = subscriptionJson;
+      existingSub.userId = userId;
+      if (deviceInfo) {
+        existingSub.deviceInfo = deviceInfo;
+      }
+      await this.pushSubscriptionRepository.save(existingSub);
+    } else {
+      // Create new subscription
+      console.log(`   Creating new subscription for endpoint`);
+      const newSub = this.pushSubscriptionRepository.create({
+        endpoint: parsed.endpoint,
+        userId,
+        subscriptionData: subscriptionJson,
+        deviceInfo: deviceInfo || undefined,
+      });
+      await this.pushSubscriptionRepository.save(newSub);
+    }
+
+    // Ensure notification settings exist and browserPush is enabled
     let settings = await this.notificationSettingsRepository.findOne({
       where: { userId },
     });
@@ -224,12 +273,10 @@ export class PushNotificationService {
       settings = this.notificationSettingsRepository.create({
         userId,
         browserPush: true, // Enable by default when user subscribes
-        pushSubscription: subscriptionJson,
       });
     } else {
-      console.log(`   Updating existing notification settings for user ${userId}`);
-      settings.pushSubscription = subscriptionJson;
-      settings.browserPush = true; // Enable when updating subscription
+      console.log(`   Enabling browser push for user ${userId}`);
+      settings.browserPush = true; // Enable when adding subscription
     }
 
     await this.notificationSettingsRepository.save(settings);
@@ -238,23 +285,68 @@ export class PushNotificationService {
   }
 
   /**
-   * Clear user's Web Push subscription
+   * Clear user's Web Push subscription(s)
+   * If endpoint is provided, only clears that specific subscription
+   * If endpoint is not provided, clears all subscriptions for the user
    */
-  async clearPushSubscription(userId: string): Promise<void> {
+  async clearPushSubscription(userId: string, endpoint?: string): Promise<void> {
     console.log(`\n🗑️  [PUSH SUBSCRIPTION] Clearing Web Push subscription for user ${userId}`);
-    
-    const settings = await this.notificationSettingsRepository.findOne({
-      where: { userId },
-    });
-
-    if (settings) {
-      settings.pushSubscription = undefined;
-      settings.browserPush = false;
-      await this.notificationSettingsRepository.save(settings);
-      console.log(`✅ [PUSH SUBSCRIPTION] Push subscription cleared successfully for user ${userId}`);
-      console.log(`   Browser push disabled: ${settings.browserPush}`);
+    if (endpoint) {
+      console.log(`   Endpoint: ${endpoint.substring(0, 50)}...`);
     } else {
-      console.log(`⏭️  [PUSH SUBSCRIPTION] No settings found for user ${userId}, nothing to clear`);
+      console.log(`   Clearing all subscriptions for user`);
+    }
+    
+    if (endpoint) {
+      // Clear specific subscription
+      const subscription = await this.pushSubscriptionRepository.findOne({
+        where: { endpoint, userId },
+      });
+
+      if (subscription) {
+        await this.pushSubscriptionRepository.remove(subscription);
+        console.log(`✅ [PUSH SUBSCRIPTION] Removed subscription for endpoint`);
+        
+        // Check if user has any remaining subscriptions
+        const remainingSubs = await this.pushSubscriptionRepository.count({
+          where: { userId },
+        });
+
+        if (remainingSubs === 0) {
+          // No more subscriptions, disable browser push
+          const settings = await this.notificationSettingsRepository.findOne({
+            where: { userId },
+          });
+          if (settings) {
+            settings.browserPush = false;
+            await this.notificationSettingsRepository.save(settings);
+            console.log(`   Browser push disabled (no remaining subscriptions)`);
+          }
+        }
+      } else {
+        console.log(`⏭️  [PUSH SUBSCRIPTION] Subscription not found for endpoint`);
+      }
+    } else {
+      // Clear all subscriptions for user
+      const subscriptions = await this.pushSubscriptionRepository.find({
+        where: { userId },
+      });
+
+      if (subscriptions.length > 0) {
+        await this.pushSubscriptionRepository.remove(subscriptions);
+        console.log(`✅ [PUSH SUBSCRIPTION] Removed ${subscriptions.length} subscription(s)`);
+      }
+
+      // Disable browser push
+      const settings = await this.notificationSettingsRepository.findOne({
+        where: { userId },
+      });
+
+      if (settings) {
+        settings.browserPush = false;
+        await this.notificationSettingsRepository.save(settings);
+        console.log(`   Browser push disabled`);
+      }
     }
   }
 
@@ -323,6 +415,7 @@ export class PushNotificationService {
     hasNotificationSettings: boolean;
     browserPushEnabled: boolean;
     hasPushSubscription: boolean;
+    subscriptionCount: number;
     subscriptionPreview?: string;
     issues: string[];
   }> {
@@ -331,6 +424,7 @@ export class PushNotificationService {
       hasNotificationSettings: false,
       browserPushEnabled: false,
       hasPushSubscription: false,
+      subscriptionCount: 0,
       subscriptionPreview: undefined as string | undefined,
       issues: [] as string[],
     };
@@ -353,13 +447,21 @@ export class PushNotificationService {
 
     diagnostics.hasNotificationSettings = true;
     diagnostics.browserPushEnabled = settings.browserPush || false;
-    diagnostics.hasPushSubscription = !!settings.pushSubscription;
 
-    if (settings.pushSubscription) {
+    // Check push subscriptions from new entity
+    const subscriptions = await this.pushSubscriptionRepository.find({
+      where: { userId },
+    });
+
+    diagnostics.subscriptionCount = subscriptions.length;
+    diagnostics.hasPushSubscription = subscriptions.length > 0;
+
+    if (subscriptions.length > 0) {
+      // Use first subscription for preview
       try {
-        const parsed = JSON.parse(settings.pushSubscription);
+        const parsed = JSON.parse(subscriptions[0].subscriptionData);
         if (parsed.endpoint) {
-          diagnostics.subscriptionPreview = `${parsed.endpoint.substring(0, 30)}...`;
+          diagnostics.subscriptionPreview = `${parsed.endpoint.substring(0, 30)}... (${subscriptions.length} device${subscriptions.length > 1 ? 's' : ''})`;
           
           // Validate subscription format
           if (!parsed.keys || !parsed.keys.p256dh || !parsed.keys.auth) {
@@ -369,14 +471,8 @@ export class PushNotificationService {
           diagnostics.issues.push('Push subscription is missing endpoint. Please re-subscribe.');
         }
       } catch (error) {
-        // Check if it's an old FCM token format
-        const subscriptionStr = settings.pushSubscription.trim();
-        if (!subscriptionStr.startsWith('{') && !subscriptionStr.startsWith('[')) {
-          diagnostics.issues.push('Old FCM token format detected. Please re-subscribe with web-push subscription.');
-        } else {
-          diagnostics.issues.push('Push subscription has invalid JSON format. Please re-subscribe.');
-        }
-        diagnostics.subscriptionPreview = settings.pushSubscription.substring(0, 30) + '...';
+        diagnostics.issues.push('Push subscription has invalid JSON format. Please re-subscribe.');
+        diagnostics.subscriptionPreview = `Invalid format (${subscriptions.length} device${subscriptions.length > 1 ? 's' : ''})`;
       }
     }
 

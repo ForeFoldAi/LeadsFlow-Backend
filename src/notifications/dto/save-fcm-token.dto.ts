@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsObject, ValidateNested } from 'class-validator';
+import { IsString, IsNotEmpty, IsObject, ValidateNested, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class PushSubscriptionKeysDto {
@@ -20,5 +20,9 @@ export class SavePushSubscriptionDto {
   @ValidateNested()
   @Type(() => PushSubscriptionKeysDto)
   keys: PushSubscriptionKeysDto;
+
+  @IsOptional()
+  @IsString()
+  deviceInfo?: string; // Optional: 'mobile', 'desktop', etc.
 }
 

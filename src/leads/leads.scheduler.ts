@@ -9,20 +9,20 @@ export class LeadsScheduler {
   constructor(private readonly leadsService: LeadsService) {}
 
   /**
-   * Send follow-up reminders daily at 1:10 PM
-   * Cron expression: '10 13 * * *'
-   * - 10: minute (10)
+   * Send follow-up reminders daily at 1:30 PM
+   * Cron expression: '30 13 * * *'
+   * - 30: minute (30)
    * - 13: hour (1 PM / 13:00)
    * - *: day of month (every day)
    * - *: month (every month)
    * - *: day of week (every day of week)
    */
-  @Cron('10 13 * * *', {
+  @Cron('30 13 * * *', {
     name: 'follow-up-reminders-noon',
     timeZone: 'Asia/Kolkata', // Change this to your timezone (e.g., 'America/New_York', 'Europe/London', etc.)
   })
   async handleFollowUpRemindersNoon() {
-    this.logger.log('🔔 Starting scheduled follow-up reminders job at 1:10 PM');
+    this.logger.log('🔔 Starting scheduled follow-up reminders job at 1:30 PM');
     
     try {
       const result = await this.leadsService.sendFollowUpReminders();

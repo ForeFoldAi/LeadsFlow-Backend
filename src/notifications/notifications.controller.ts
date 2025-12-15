@@ -56,6 +56,7 @@ export class NotificationsController {
       await this.pushNotificationService.savePushSubscription(
         userId,
         subscriptionDto,
+        subscriptionDto.deviceInfo,
       );
 
       return {
@@ -75,12 +76,19 @@ export class NotificationsController {
   @Delete('unsubscribe')
   @HttpCode(HttpStatus.OK)
   @UseGuards(TokenAuthGuard)
-  async unsubscribeFromPushNotifications(@Request() req) {
+  async unsubscribeFromPushNotifications(
+    @Request() req,
+    @Body() body?: { endpoint?: string },
+  ) {
     const userId = req.user.sub.toString();
-    await this.pushNotificationService.clearPushSubscription(userId);
+    const endpoint = body?.endpoint;
+    
+    await this.pushNotificationService.clearPushSubscription(userId, endpoint);
 
     return {
-      message: 'Push notification subscription removed successfully',
+      message: endpoint 
+        ? 'Push notification subscription removed successfully for this device'
+        : 'All push notification subscriptions removed successfully',
     };
   }
 

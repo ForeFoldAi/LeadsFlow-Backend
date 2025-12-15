@@ -840,7 +840,7 @@ export class LeadsService {
       newLeads: settings.newLeads,
       followUps: settings.followUps,
       browserPush: settings.browserPush,
-      hasPushToken: !!settings.pushSubscription,
+      hasPushToken: settings.browserPush, // Check handled by push service
     });
 
     // Check if email notifications and new leads notifications are enabled
@@ -870,11 +870,11 @@ export class LeadsService {
       return false;
     }
 
-    // Check if browser push is enabled and user has a valid token
-    const isEnabled = settings.browserPush && !!settings.pushSubscription;
+    // Check if browser push is enabled (subscription check happens in push service)
+    const isEnabled = settings.browserPush;
     
     if (!isEnabled) {
-      console.log(`⏭️  [BROWSER PUSH] Browser push disabled or no token for user ${userIdStr}: browserPush=${settings.browserPush}, hasToken=${!!settings.pushSubscription}`);
+      console.log(`⏭️  [BROWSER PUSH] Browser push disabled for user ${userIdStr}: browserPush=${settings.browserPush}`);
     } else {
       console.log(`✅ [BROWSER PUSH] Browser push enabled for user ${userIdStr}`);
     }
@@ -1002,7 +1002,8 @@ export class LeadsService {
         }
 
         // Send browser push notification if browser push is enabled (independent of email)
-        const shouldSendPush = settings.browserPush && newLeadsEnabled && !!settings.pushSubscription;
+        // The push service will check for actual subscriptions
+        const shouldSendPush = settings.browserPush && newLeadsEnabled;
         if (shouldSendPush) {
           console.log(`✓ Sending browser push notification to user ${userId}`);
           // Send push notification (non-blocking)
@@ -1020,7 +1021,7 @@ export class LeadsService {
             console.error(`❌ Error sending browser push notification to user ${userId}:`, error);
           });
         } else {
-          console.log(`⏭️  Skipping browser push notification for user ${userId}: browserPush=${settings.browserPush}, newLeads=${newLeadsEnabled}, hasToken=${!!settings.pushSubscription}`);
+          console.log(`⏭️  Skipping browser push notification for user ${userId}: browserPush=${settings.browserPush}, newLeads=${newLeadsEnabled}`);
         }
         
         // Add delay before sending next email (only if email was sent, to avoid bulk sending)
