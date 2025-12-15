@@ -9,20 +9,48 @@ export class LeadsScheduler {
   constructor(private readonly leadsService: LeadsService) {}
 
   /**
-   * Send follow-up reminders daily at 12:00 PM (noon)
-   * Cron expression: '0 12 * * *'
-   * - 0: minute (0)
-   * - 12: hour (12 PM / noon)
+   * Send follow-up reminders daily at 1:10 PM
+   * Cron expression: '10 13 * * *'
+   * - 10: minute (10)
+   * - 13: hour (1 PM / 13:00)
    * - *: day of month (every day)
    * - *: month (every month)
    * - *: day of week (every day of week)
    */
-  @Cron('0 12 * * *', {
+  @Cron('10 13 * * *', {
+    name: 'follow-up-reminders-noon',
+    timeZone: 'Asia/Kolkata', // Change this to your timezone (e.g., 'America/New_York', 'Europe/London', etc.)
+  })
+  async handleFollowUpRemindersNoon() {
+    this.logger.log('🔔 Starting scheduled follow-up reminders job at 1:10 PM');
+    
+    try {
+      const result = await this.leadsService.sendFollowUpReminders();
+      
+      this.logger.log(
+        `✅ Follow-up reminders job completed successfully: ` +
+        `${result.sent} sent, ${result.errors} errors, ${result.skipped} skipped`
+      );
+    } catch (error) {
+      this.logger.error('❌ Error running follow-up reminders job:', error);
+    }
+  }
+
+  /**
+   * Send follow-up reminders daily at 8:30 PM
+   * Cron expression: '30 20 * * *'
+   * - 30: minute (30)
+   * - 20: hour (8 PM / 20:00)
+   * - *: day of month (every day)
+   * - *: month (every month)
+   * - *: day of week (every day of week)
+   */
+  @Cron('30 20 * * *', {
     name: 'follow-up-reminders',
     timeZone: 'Asia/Kolkata', // Change this to your timezone (e.g., 'America/New_York', 'Europe/London', etc.)
   })
   async handleFollowUpReminders() {
-    this.logger.log('🔔 Starting scheduled follow-up reminders job at 12:00 PM');
+    this.logger.log('🔔 Starting scheduled follow-up reminders job at 8:30 PM');
     
     try {
       const result = await this.leadsService.sendFollowUpReminders();

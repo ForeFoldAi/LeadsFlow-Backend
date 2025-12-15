@@ -160,13 +160,23 @@ export class ProfileService {
 
     if (!settings) {
       console.log(`Creating new notification settings for user ${userIdStr}`);
+      
+      // Validate: If enabling browserPush, a push subscription must exist
+      const browserPushValue = updateDto.browserPush ?? false;
+      if (browserPushValue === true && !updateDto.pushSubscription) {
+        console.log(`❌ [NOTIFICATION SETTINGS] Cannot enable browserPush without a push subscription for user ${userIdStr}`);
+        throw new BadRequestException(
+          'Cannot enable browser notifications without a push subscription. Please subscribe to push notifications first by allowing browser notifications in your browser settings.'
+        );
+      }
+      
       settings = this.notificationSettingsRepository.create({
         userId: userIdStr,
         newLeads: updateDto.newLeads ?? true,
         followUps: updateDto.followUps ?? true,
         hotLeads: updateDto.hotLeads ?? true,
         conversions: updateDto.conversions ?? true,
-        browserPush: updateDto.browserPush ?? false,
+        browserPush: browserPushValue,
         dailySummary: updateDto.dailySummary ?? false,
         emailNotifications: updateDto.emailNotifications ?? true,
         pushSubscription: updateDto.pushSubscription,
@@ -186,7 +196,19 @@ export class ProfileService {
       if (updateDto.followUps !== undefined) settings.followUps = updateDto.followUps;
       if (updateDto.hotLeads !== undefined) settings.hotLeads = updateDto.hotLeads;
       if (updateDto.conversions !== undefined) settings.conversions = updateDto.conversions;
-      if (updateDto.browserPush !== undefined) settings.browserPush = updateDto.browserPush;
+      if (updateDto.browserPush !== undefined) {
+        // Validate: If enabling browserPush, a push subscription must exist
+        if (updateDto.browserPush === true) {
+          const hasSubscription = settings.pushSubscription || updateDto.pushSubscription;
+          if (!hasSubscription) {
+            console.log(`❌ [NOTIFICATION SETTINGS] Cannot enable browserPush without a push subscription for user ${userIdStr}`);
+            throw new BadRequestException(
+              'Cannot enable browser notifications without a push subscription. Please subscribe to push notifications first by allowing browser notifications in your browser settings.'
+            );
+          }
+        }
+        settings.browserPush = updateDto.browserPush;
+      }
       if (updateDto.dailySummary !== undefined) settings.dailySummary = updateDto.dailySummary;
       
       // Only update emailNotifications if explicitly provided AND it's true
@@ -212,7 +234,20 @@ export class ProfileService {
         }
       }
       
-      if (updateDto.pushSubscription !== undefined) settings.pushSubscription = updateDto.pushSubscription;
+      if (updateDto.pushSubscription !== undefined) {
+        settings.pushSubscription = updateDto.pushSubscription;
+        // If subscription is being cleared and browserPush is enabled, disable browserPush
+        if (!updateDto.pushSubscription && settings.browserPush) {
+          console.log(`⚠️  [NOTIFICATION SETTINGS] Push subscription cleared for user ${userIdStr}. Disabling browserPush.`);
+          settings.browserPush = false;
+        }
+      }
+      
+      // Also check: if browserPush is enabled but subscription is missing, disable browserPush
+      if (settings.browserPush && !settings.pushSubscription) {
+        console.log(`⚠️  [NOTIFICATION SETTINGS] browserPush is enabled but no subscription exists for user ${userIdStr}. Disabling browserPush.`);
+        settings.browserPush = false;
+      }
       
       console.log(`After update:`, {
         newLeads: settings.newLeads,

@@ -1,6 +1,20 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import * as os from 'os';
+
+function getLocalIPAddress(): string {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      // Skip internal (loopback) and non-IPv4 addresses
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -26,7 +40,12 @@ async function bootstrap() {
   );
 
   const port = process.env.PORT || 3000;
-  await app.listen(port);
-  console.log(`Application is running on: http://localhost:${port}`);
+  const host = '0.0.0.0'; // Listen on all network interfaces
+  await app.listen(port, host);
+  
+  const localIP = getLocalIPAddress();
+  console.log(`Application is running on:`);
+  console.log(`  Local:   http://localhost:${port}`);
+  console.log(`  Network: http://${localIP}:${port}`);
 }
 bootstrap();

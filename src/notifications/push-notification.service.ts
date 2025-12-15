@@ -284,6 +284,7 @@ export class PushNotificationService {
 
   /**
    * Send notification for follow-up reminder
+   * If browserPush is true, sends browser push notification automatically
    */
   async sendFollowUpNotification(
     userId: string,
@@ -299,6 +300,8 @@ export class PushNotificationService {
     const dateObj = followUpDate instanceof Date ? followUpDate : new Date(followUpDate);
     console.log(`   Follow-up Date: ${dateObj.toISOString()}`);
     
+    // If browserPush is enabled, sendToUser will handle all checks (browserPush, subscription, etc.)
+    // No need to check followUps - if browserPush is true, send browser notifications
     return this.sendToUser(userId, {
       title: '⏰ Follow-up Reminder',
       body: `Follow-up with ${leadName} is scheduled for today`,

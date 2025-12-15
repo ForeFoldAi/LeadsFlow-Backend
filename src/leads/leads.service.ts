@@ -1102,31 +1102,43 @@ export class LeadsService {
           const userId = user.id;
           console.log(`   [${i + 1}/${companyUsers.length}] Checking notification settings for user ${userId} (${user.email})`);
           
-          const shouldNotify = await this.shouldSendFollowUpNotification(userId);
+          // Check notification settings (fetch once and reuse)
+          const notificationSettings = await this.notificationSettingsRepository.findOne({
+            where: { userId: userId.toString() },
+          });
           
-          if (!shouldNotify) {
+          // Check if follow-ups email notifications are enabled (for email)
+          // For browser push, we check browserPush separately below
+          const shouldNotifyEmail = notificationSettings && 
+            notificationSettings.emailNotifications && 
+            notificationSettings.followUps;
+          
+          if (!shouldNotifyEmail && (!notificationSettings || !notificationSettings.browserPush)) {
             console.log(`   ✗ Skipping user ${userId} (${user.email}): follow-up notifications disabled`);
             skipped++;
             continue;
           }
 
-          console.log(`   ✓ Sending follow-up reminder to user ${userId} (${user.email})`);
+          // Send email notification if enabled
+          if (shouldNotifyEmail) {
+            console.log(`   ✓ Sending email follow-up reminder to user ${userId} (${user.email})`);
+            await this.emailService.sendFollowUpReminder(
+              user.email,
+              lead.name,
+              lead.nextFollowupDate,
+              lead.email,
+              lead.phoneNumber,
+              lead.companyName,
+              lead.additionalNotes,
+            );
+            console.log(`   ✅ Email sent successfully to ${user.email}`);
+          } else {
+            console.log(`   ⏭️  Skipping email for user ${userId} (${user.email}): email notifications or follow-ups disabled`);
+          }
           
-          // Send email notification
-          await this.emailService.sendFollowUpReminder(
-            user.email,
-            lead.name,
-            lead.nextFollowupDate,
-            lead.email,
-            lead.phoneNumber,
-            lead.companyName,
-            lead.additionalNotes,
-          );
-          console.log(`   ✅ Email sent successfully to ${user.email}`);
-          
-          // Check if browser push is enabled before sending push notification
-          const shouldSendPush = await this.shouldSendBrowserPushNotification(userId);
-          if (shouldSendPush) {
+          // Send browser push notification if browserPush is enabled
+          // No need to check followUps - if browserPush is true, send browser notifications automatically
+          if (notificationSettings && notificationSettings.browserPush) {
             // Send push notification (non-blocking)
             this.pushNotificationService.sendFollowUpNotification(
               userId.toString(),
@@ -1143,7 +1155,7 @@ export class LeadsService {
               console.error(`   ❌ Error sending browser push notification to user ${userId}:`, error);
             });
           } else {
-            console.log(`   ⏭️  Skipping browser push notification for user ${userId} (browser push not enabled or no token)`);
+            console.log(`   ⏭️  Skipping browser push notification for user ${userId} (browser push not enabled)`);
           }
           
           sent++;
