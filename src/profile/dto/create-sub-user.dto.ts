@@ -55,5 +55,9 @@ export class CreateSubUserDto {
   @IsOptional()
   @IsBoolean()
   canAddLeads?: boolean = false;
+
+  @IsOptional()
+  @IsBoolean()
+  canExportLeads?: boolean = false;
 }
 

@@ -439,6 +439,7 @@ export class ProfileService {
       canViewLeads: createDto.canViewLeads ?? true,
       canEditLeads: createDto.canEditLeads ?? false,
       canAddLeads: createDto.canAddLeads ?? false,
+      canExportLeads: createDto.canExportLeads ?? false,
     });
 
     await this.userPermissionsRepository.save(permissions);
@@ -454,7 +455,7 @@ export class ProfileService {
 
   async updateSubUserPermissions(
     parentUserId: number,
-    subUserId: number,
+    subUserId: string,
     updateDto: UpdateSubUserPermissionsDto,
   ): Promise<SubUserResponseDto> {
     // Get parent user to verify role
@@ -475,7 +476,7 @@ export class ProfileService {
     // Verify the sub-user belongs to the parent user
     const permissions = await this.userPermissionsRepository.findOne({
       where: {
-        userId: subUserId.toString(),
+        userId: subUserId,
         parentUserId: parentUserId.toString(),
       },
       relations: ['user', 'parentUser'],
@@ -490,14 +491,14 @@ export class ProfileService {
 
     // Reload
     const updatedPermissions = await this.userPermissionsRepository.findOne({
-      where: { userId: subUserId.toString() },
+      where: { userId: subUserId },
       relations: ['user', 'parentUser'],
     });
 
     return this.mapToSubUserResponse(permissions.user, updatedPermissions!);
   }
 
-  async deleteSubUser(parentUserId: number, subUserId: number): Promise<{ message: string }> {
+  async deleteSubUser(parentUserId: number, subUserId: string): Promise<{ message: string }> {
     // Get parent user to verify role
     const parentUser = await this.userRepository.findOne({
       where: { id: parentUserId },
@@ -516,17 +517,18 @@ export class ProfileService {
     // Verify the sub-user belongs to the parent user
     const permissions = await this.userPermissionsRepository.findOne({
       where: {
-        userId: subUserId.toString(),
+        userId: subUserId,
         parentUserId: parentUserId.toString(),
       },
+      relations: ['user'],
     });
 
-    if (!permissions) {
+    if (!permissions || !permissions.user) {
       throw new NotFoundException('Sub-user not found or access denied');
     }
 
-    // Delete permissions and user (CASCADE will handle it)
-    await this.userRepository.delete({ id: subUserId });
+    // Delete user by numeric ID (user_permissions.user_id is string, but User.id is number)
+    await this.userRepository.delete({ id: permissions.user.id });
 
     return { message: 'Sub-user deleted successfully' };
   }
@@ -704,6 +706,7 @@ export class ProfileService {
             canViewLeads: permissions.canViewLeads,
             canEditLeads: permissions.canEditLeads,
             canAddLeads: permissions.canAddLeads,
+            canExportLeads: permissions.canExportLeads,
           }
         : undefined,
       parentUserId: permissions?.parentUser

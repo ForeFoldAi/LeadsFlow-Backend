@@ -12,7 +12,6 @@ import {
   HttpCode,
   HttpStatus,
   ValidationPipe,
-  ParseIntPipe,
 } from '@nestjs/common';
 import { ProfileService } from './profile.service';
 import {
@@ -109,7 +108,7 @@ export class ProfileController {
   @HttpCode(HttpStatus.OK)
   async updateSubUserPermissions(
     @Request() req,
-    @Param('id', ParseIntPipe) subUserId: number,
+    @Param('id') subUserId: string,
     @Body(ValidationPipe) updateDto: UpdateSubUserPermissionsDto,
   ): Promise<SubUserResponseDto> {
     const parentUserId = req.user.sub;
@@ -124,7 +123,7 @@ export class ProfileController {
   @HttpCode(HttpStatus.OK)
   async deleteSubUser(
     @Request() req,
-    @Param('id', ParseIntPipe) subUserId: number,
+    @Param('id') subUserId: string,
   ): Promise<{ message: string }> {
     const parentUserId = req.user.sub;
     return this.profileService.deleteSubUser(parentUserId, subUserId);

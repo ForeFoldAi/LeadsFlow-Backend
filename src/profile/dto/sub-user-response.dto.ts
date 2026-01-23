@@ -5,6 +5,7 @@ export class SubUserResponseDto extends UserResponseDto {
     canViewLeads: boolean;
     canEditLeads: boolean;
     canAddLeads: boolean;
+    canExportLeads: boolean;
   };
   parentUserId?: number | string; // Can be number (integer ID) or string (UUID)
 }

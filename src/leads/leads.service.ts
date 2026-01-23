@@ -655,8 +655,14 @@ export class LeadsService {
       where: { userId: userId.toString() },
     });
 
-    if (userPermissions && !userPermissions.canViewLeads) {
-      throw new ForbiddenException('You do not have permission to export leads');
+    if (userPermissions) {
+      // Sub-users need both canViewLeads and canExportLeads to export
+      if (!userPermissions.canViewLeads) {
+        throw new ForbiddenException('You do not have permission to view leads');
+      }
+      if (!userPermissions.canExportLeads) {
+        throw new ForbiddenException('You do not have permission to export leads');
+      }
     }
 
     let effectiveUserId = userId;

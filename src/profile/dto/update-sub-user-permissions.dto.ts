@@ -12,5 +12,9 @@ export class UpdateSubUserPermissionsDto {
   @IsOptional()
   @IsBoolean()
   canAddLeads?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  canExportLeads?: boolean;
 }
 

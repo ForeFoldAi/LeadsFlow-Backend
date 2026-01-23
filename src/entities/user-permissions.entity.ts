@@ -38,6 +38,9 @@ export class UserPermissions {
   @Column({ name: 'can_add_leads', type: 'boolean', default: false })
   canAddLeads: boolean;
 
+  @Column({ name: 'can_export_leads', type: 'boolean', default: false })
+  canExportLeads: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
   createdAt: Date;
 
