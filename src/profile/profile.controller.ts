@@ -41,7 +41,7 @@ export class ProfileController {
   // Get User Profile (Basic Info)
   @Get()
   @HttpCode(HttpStatus.OK)
-  async getUserProfile(@Request() req): Promise<UserResponseDto> {
+  async getUserProfile(@Request() req): Promise<SubUserResponseDto> {
     const userId = req.user.sub;
     return this.profileService.getUserProfile(userId);
   }

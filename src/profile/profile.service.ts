@@ -47,7 +47,7 @@ export class ProfileService {
   ) {}
 
   // Get User Profile Method
-  async getUserProfile(userId: number): Promise<UserResponseDto> {
+  async getUserProfile(userId: number): Promise<SubUserResponseDto> {
     const user = await this.userRepository.findOne({
       where: { id: userId },
     });
@@ -56,7 +56,19 @@ export class ProfileService {
       throw new NotFoundException('User not found');
     }
 
-    return this.mapToUserResponse(user);
+    // Check if user is a sub-user and get permissions
+    const userPermissions = await this.userPermissionsRepository.findOne({
+      where: { userId: userId.toString() },
+      relations: ['parentUser'],
+    });
+
+    // If user has permissions, they are a sub-user - return with permissions
+    if (userPermissions) {
+      return this.mapToSubUserResponse(user, userPermissions);
+    }
+
+    // Regular user - return without permissions
+    return this.mapToSubUserResponse(user, undefined);
   }
 
   // Profile Preferences Methods

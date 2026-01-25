@@ -653,21 +653,50 @@ export class LeadsService {
     // Check if user is a sub-user
     const userPermissions = await this.userPermissionsRepository.findOne({
       where: { userId: userId.toString() },
+      relations: ['parentUser'],
     });
+
+    let effectiveUserId = userId;
 
     if (userPermissions) {
       // Sub-users need both canViewLeads and canExportLeads to export
       if (!userPermissions.canViewLeads) {
         throw new ForbiddenException('You do not have permission to view leads');
       }
-      if (!userPermissions.canExportLeads) {
+      // Check canExportLeads - if it's false, null, or undefined, deny access
+      // Note: If the column doesn't exist in DB, it will be undefined
+      if (userPermissions.canExportLeads !== true) {
         throw new ForbiddenException('You do not have permission to export leads');
       }
-    }
 
-    let effectiveUserId = userId;
-    if (userPermissions) {
-      effectiveUserId = parseInt(userPermissions.parentUserId, 10);
+      // Get parent user from relation (already loaded)
+      const parentUser = userPermissions.parentUser;
+      
+      if (!parentUser) {
+        console.error('Parent user not found for sub-user:', userId);
+        console.error('userPermissions.parentUserId:', userPermissions.parentUserId);
+        throw new NotFoundException(
+          `Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`
+        );
+      }
+      
+      if (!parentUser.isActive) {
+        throw new ForbiddenException('Your parent account is inactive. Please contact your administrator.');
+      }
+      
+      // Use parent user's ID (may be UUID string or number depending on DB schema)
+      effectiveUserId = parentUser.id as any;
+    } else {
+      // Regular user: verify they exist
+      const user = await this.userRepository.findOne({
+        where: { id: userId },
+      });
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+      if (!user.isActive) {
+        throw new ForbiddenException('Your account is inactive. Please contact your administrator.');
+      }
     }
 
     // For export, we want all leads (no pagination limit, but max 1000)
