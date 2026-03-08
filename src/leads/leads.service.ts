@@ -202,13 +202,16 @@ export class LeadsService {
       // Apply pagination
       const leads = await queryBuilder.skip(skip).take(limit).getMany();
 
+      // Resolve lastContactedBy UUIDs to user names (legacy data from old sendMessage flow)
+      const lastContactedByUserMap = await this.resolveLastContactedByUserMap(leads);
+
       // Calculate pagination metadata
       const totalPages = Math.ceil(total / limit);
       const hasNextPage = page < totalPages;
       const hasPreviousPage = page > 1;
 
       return {
-        data: leads.map((lead) => this.mapToResponseDto(lead)),
+        data: leads.map((lead) => this.mapToResponseDto(lead, lastContactedByUserMap)),
         meta: {
           total,
           page,
@@ -273,7 +276,8 @@ export class LeadsService {
       throw new NotFoundException(`Lead with ID ${id} not found`);
     }
 
-    return this.mapToResponseDto(lead);
+    const lastContactedByUserMap = await this.resolveLastContactedByUserMap([lead]);
+    return this.mapToResponseDto(lead, lastContactedByUserMap);
   }
 
   async create(createLeadDto: CreateLeadDto, userId: string): Promise<LeadResponseDto> {
@@ -355,7 +359,8 @@ export class LeadsService {
       console.error('Error sending new lead notifications:', error);
     });
 
-    return this.mapToResponseDto(leadWithUser!);
+    const lastContactedByUserMap = await this.resolveLastContactedByUserMap([leadWithUser!]);
+    return this.mapToResponseDto(leadWithUser!, lastContactedByUserMap);
   }
 
   async update(
@@ -484,7 +489,8 @@ export class LeadsService {
       relations: ['user'],
     });
 
-    return this.mapToResponseDto(updatedLead!);
+    const lastContactedByUserMap = await this.resolveLastContactedByUserMap([updatedLead!]);
+    return this.mapToResponseDto(updatedLead!, lastContactedByUserMap);
   }
 
   async remove(id: string, userId: string): Promise<{ message: string }> {
@@ -627,9 +633,10 @@ export class LeadsService {
         });
 
         if (leadWithUser) {
+          const lastContactedByUserMap = await this.resolveLastContactedByUserMap([leadWithUser]);
           results.push({
             success: true,
-            lead: this.mapToResponseDto(leadWithUser),
+            lead: this.mapToResponseDto(leadWithUser, lastContactedByUserMap),
             rowNumber,
           });
           successful++;
@@ -1534,7 +1541,35 @@ export class LeadsService {
     }
   }
 
-  private mapToResponseDto(lead: Lead): LeadResponseDto {
+  /** UUID regex for last_contacted_by values that were stored as user IDs (legacy) */
+  private static readonly UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  private async resolveLastContactedByUserMap(leads: Lead[]): Promise<Map<string, string>> {
+    const ids = [...new Set(
+      leads
+        .map((l) => l.lastContactedBy)
+        .filter((v): v is string => !!v && LeadsService.UUID_REGEX.test(v)),
+    )];
+    if (ids.length === 0) return new Map();
+    const users = await this.userRepository.find({ where: { id: In(ids) } });
+    return new Map(users.map((u) => [u.id, u.fullName]));
+  }
+
+  /**
+   * Used by automation to mark who last contacted the lead via a schedule.
+   * This sets a friendly label like "manith (auto)" in last_contacted_by.
+   */
+  async setLastContactedByFromAutomation(leadId: string, contactedByLabel: string): Promise<void> {
+    await this.leadRepository.update({ id: leadId }, { lastContactedBy: contactedByLabel });
+  }
+
+  private mapToResponseDto(lead: Lead, lastContactedByUserMap?: Map<string, string>): LeadResponseDto {
+    // Resolve lastContactedBy when it's a user ID (legacy from old sendMessage flow)
+    let lastContactedBy = lead.lastContactedBy;
+    if (lastContactedBy && lastContactedByUserMap?.has(lastContactedBy)) {
+      lastContactedBy = lastContactedByUserMap.get(lastContactedBy)!;
+    }
+
     // Map user data if available
     const userData: UserResponseDto | undefined = lead.user
       ? {
@@ -1570,7 +1605,7 @@ export class LeadsService {
       designation: lead.designation,
       customerCategory: lead.customerCategory,
       lastContactedDate: lead.lastContactedDate,
-      lastContactedBy: lead.lastContactedBy,
+      lastContactedBy,
       nextFollowupDate: lead.nextFollowupDate,
       customerInterestedIn: lead.customerInterestedIn,
       preferredCommunicationChannel: lead.preferredCommunicationChannel,

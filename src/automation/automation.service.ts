@@ -101,6 +101,10 @@ export class AutomationService {
         let processed = 0;
         let failed = 0;
 
+        const owner = await this.userRepository.findOne({ where: { id: schedule.userId } });
+        const ownerLabelBase = owner?.fullName?.trim() || owner?.email || 'Automation';
+        const ownerLabel = `${ownerLabelBase} (auto)`;
+
         // 1. Get leads based on targetFilter
         const leads = await this.leadsService.findLeadsDueForFollowUp(schedule.userId);
 
@@ -150,6 +154,9 @@ export class AutomationService {
                         templateId: schedule.templateId,
                     }, schedule.userId);
                     processed++;
+
+                    // Mark last contacted by as automation for this user
+                    await this.leadsService.setLastContactedByFromAutomation(lead.id, ownerLabel);
 
                     // Add 2 second delay between successful messages to prevent spam/rate limits
                     await this.sleep(2000);

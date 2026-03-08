@@ -94,11 +94,11 @@ export class CommunicationService {
 
         const savedLog = await this.logRepository.save(log);
 
-        // Update lead's last contacted date if successful
+        // Update lead's last contacted date if successful.
+        // Do NOT overwrite lastContactedBy – that field is user-controlled via forms.
         if (status === 'sent') {
             await this.leadRepository.update(leadId, {
                 lastContactedDate: new Date(),
-                lastContactedBy: userId,
             });
         }
 
