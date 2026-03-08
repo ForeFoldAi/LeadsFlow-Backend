@@ -14,7 +14,7 @@ import { TokenAuthGuard } from '../auth/guards/token-auth.guard';
 @Controller('users')
 @UseGuards(TokenAuthGuard) // All users endpoints require authentication
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   @Get()
   @HttpCode(HttpStatus.OK)
@@ -25,11 +25,7 @@ export class UsersController {
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   async getUserById(@Param('id') id: string): Promise<UserResponseDto> {
-    const userId = parseInt(id, 10);
-    if (isNaN(userId)) {
-      throw new NotFoundException(`Invalid user ID: ${id}`);
-    }
-    const user = await this.usersService.findOne(userId);
+    const user = await this.usersService.findOne(id);
 
     if (!user) {
       throw new NotFoundException(`User with ID ${id} not found`);

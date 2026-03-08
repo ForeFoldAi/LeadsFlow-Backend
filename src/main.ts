@@ -2,6 +2,11 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as os from 'os';
+import * as pg from 'pg';
+
+// Interpret Postgres "timestamp without time zone" as UTC so API sends correct time (frontend shows local).
+const TIMESTAMP_WITHOUT_TZ_OID = 1114;
+pg.types.setTypeParser(TIMESTAMP_WITHOUT_TZ_OID, (val: string) => new Date(val + 'Z'));
 
 function getLocalIPAddress(): string {
   const interfaces = os.networkInterfaces();

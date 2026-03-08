@@ -32,19 +32,32 @@ export class LeadsService {
     private customSectorRepository: Repository<CustomSector>,
     private emailService: EmailService,
     private pushNotificationService: PushNotificationService,
-  ) {}
+  ) { }
+
+  async findLeadsDueForFollowUp(userId: string): Promise<Lead[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return await this.leadRepository
+      .createQueryBuilder('lead')
+      .where('lead.userId = :userId', { userId })
+      .andWhere('lead.nextFollowupDate IS NOT NULL')
+      .andWhere('lead.nextFollowupDate <= :today', { today })
+      .orderBy('lead.nextFollowupDate', 'ASC')
+      .getMany();
+  }
 
   async findAll(
-    userId: number,
+    userId: string,
     query: GetLeadsQueryDto,
   ): Promise<PaginatedLeadsResponseDto> {
     try {
       // Check if user is a sub-user
       const userPermissions = await this.userPermissionsRepository.findOne({
-        where: { userId: userId.toString() },
+        where: { userId: userId },
         relations: ['parentUser'],
       });
-      
+
       let effectiveUserId = userId;
       let companyName: string | undefined;
       let isSubUser = false;
@@ -55,10 +68,10 @@ export class LeadsService {
         if (!userPermissions.canViewLeads) {
           throw new ForbiddenException('You do not have permission to view leads');
         }
-        
+
         // Use parent user from relation (already loaded)
         const parentUser = userPermissions.parentUser;
-        
+
         if (!parentUser) {
           console.error('Parent user not found for sub-user:', userId);
           console.error('userPermissions.parentUserId:', userPermissions.parentUserId);
@@ -66,11 +79,11 @@ export class LeadsService {
             `Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`
           );
         }
-        
+
         if (!parentUser.isActive) {
           throw new ForbiddenException('Your parent account is inactive. Please contact your administrator.');
         }
-        
+
         // Use parent user's ID (may be UUID string or number depending on DB schema)
         effectiveUserId = parentUser.id as any;
         companyName = parentUser.companyName;
@@ -147,7 +160,7 @@ export class LeadsService {
       if (query.followupDateFilter) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        
+
         if (query.followupDateFilter === 'overdue') {
           // Overdue: nextFollowupDate <= yesterday (and not converted)
           const yesterday = new Date(today.getTime() - 1);
@@ -212,7 +225,7 @@ export class LeadsService {
     }
   }
 
-  async findOne(id: string, userId: number): Promise<LeadResponseDto> {
+  async findOne(id: string, userId: string): Promise<LeadResponseDto> {
     // Check if user is a sub-user
     const userPermissions = await this.userPermissionsRepository.findOne({
       where: { userId: userId.toString() },
@@ -263,7 +276,7 @@ export class LeadsService {
     return this.mapToResponseDto(lead);
   }
 
-  async create(createLeadDto: CreateLeadDto, userId: number): Promise<LeadResponseDto> {
+  async create(createLeadDto: CreateLeadDto, userId: string): Promise<LeadResponseDto> {
     // Check if user is a sub-user
     const userPermissions = await this.userPermissionsRepository.findOne({
       where: { userId: userId.toString() },
@@ -278,12 +291,12 @@ export class LeadsService {
     if (userPermissions) {
       // Get parent user to use their ID
       const parentUser = await this.userRepository.findOne({
-        where: { id: userPermissions.parentUserId as any },
+        where: { id: userPermissions.parentUserId },
       });
       if (!parentUser) {
         throw new NotFoundException(`Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`);
       }
-      effectiveUserId = parentUser.id as any;
+      effectiveUserId = parentUser.id;
     }
     // Convert date strings to Date objects
     const leadData: Partial<Lead> = {
@@ -347,7 +360,7 @@ export class LeadsService {
 
   async update(
     id: string,
-    userId: number,
+    userId: string,
     updateLeadDto: UpdateLeadDto,
   ): Promise<LeadResponseDto> {
     // Check if user is a sub-user
@@ -369,7 +382,7 @@ export class LeadsService {
       if (!parentUser) {
         throw new NotFoundException(`Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`);
       }
-      effectiveUserId = parentUser.id as any;
+      effectiveUserId = parentUser.id;
       companyName = parentUser.companyName;
     }
 
@@ -474,7 +487,7 @@ export class LeadsService {
     return this.mapToResponseDto(updatedLead!);
   }
 
-  async remove(id: string, userId: number): Promise<{ message: string }> {
+  async remove(id: string, userId: string): Promise<{ message: string }> {
     // Check if user is a sub-user
     const userPermissions = await this.userPermissionsRepository.findOne({
       where: { userId: userId.toString() },
@@ -494,7 +507,7 @@ export class LeadsService {
       if (!parentUser) {
         throw new NotFoundException(`Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`);
       }
-      effectiveUserId = parentUser.id as any;
+      effectiveUserId = parentUser.id;
       companyName = parentUser.companyName;
     }
 
@@ -530,7 +543,7 @@ export class LeadsService {
 
   async importLeads(
     leads: CreateLeadDto[],
-    userId: number,
+    userId: string,
   ): Promise<ImportLeadsResponseDto> {
     // Check if user is a sub-user
     const userPermissions = await this.userPermissionsRepository.findOne({
@@ -546,12 +559,12 @@ export class LeadsService {
     if (userPermissions) {
       // Get parent user to use their ID
       const parentUser = await this.userRepository.findOne({
-        where: { id: userPermissions.parentUserId as any },
+        where: { id: userPermissions.parentUserId },
       });
       if (!parentUser) {
         throw new NotFoundException(`Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`);
       }
-      effectiveUserId = parentUser.id as any;
+      effectiveUserId = parentUser.id;
     }
     const results: ImportLeadResult[] = [];
     let successful = 0;
@@ -649,7 +662,7 @@ export class LeadsService {
     };
   }
 
-  async exportToCsv(userId: number, query: GetLeadsQueryDto): Promise<string> {
+  async exportToCsv(userId: string, query: GetLeadsQueryDto): Promise<string> {
     // Check if user is a sub-user
     const userPermissions = await this.userPermissionsRepository.findOne({
       where: { userId: userId.toString() },
@@ -671,7 +684,7 @@ export class LeadsService {
 
       // Get parent user from relation (already loaded)
       const parentUser = userPermissions.parentUser;
-      
+
       if (!parentUser) {
         console.error('Parent user not found for sub-user:', userId);
         console.error('userPermissions.parentUserId:', userPermissions.parentUserId);
@@ -679,11 +692,11 @@ export class LeadsService {
           `Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`
         );
       }
-      
+
       if (!parentUser.isActive) {
         throw new ForbiddenException('Your parent account is inactive. Please contact your administrator.');
       }
-      
+
       // Use parent user's ID (may be UUID string or number depending on DB schema)
       effectiveUserId = parentUser.id as any;
     } else {
@@ -814,8 +827,8 @@ export class LeadsService {
 
     // Step 2: Get sub-users whose parent users are in the same company (by company name)
     // First, get all parent user IDs that belong to this company
-    const parentUserIds = companyUsers.map((user) => user.id.toString());
-    
+    const parentUserIds = companyUsers.map((user) => user.id);
+
     if (parentUserIds.length === 0) {
       // No company users found, return all company users (including creator)
       return companyUsers;
@@ -854,7 +867,7 @@ export class LeadsService {
   private async shouldSendNewLeadNotification(userId: number | string): Promise<boolean> {
     // Convert userId to string (handles both number and UUID string)
     const userIdStr = typeof userId === 'number' ? userId.toString() : userId;
-    
+
     // Try to find settings with exact match
     let settings = await this.notificationSettingsRepository.findOne({
       where: { userId: userIdStr },
@@ -863,7 +876,7 @@ export class LeadsService {
     // If not found, try querying all settings to debug
     if (!settings) {
       const allSettings = await this.notificationSettingsRepository.find();
-      console.log(`No notification settings found for user ${userIdStr}. Available user IDs in settings:`, 
+      console.log(`No notification settings found for user ${userIdStr}. Available user IDs in settings:`,
         allSettings.map(s => s.userId).slice(0, 5));
       console.log(`Defaulting to enabled for user ${userIdStr}`);
       return true;
@@ -880,13 +893,13 @@ export class LeadsService {
 
     // Check if email notifications and new leads notifications are enabled
     const isEnabled = settings.emailNotifications && settings.newLeads;
-    
+
     if (!isEnabled) {
       console.log(`❌ Notifications disabled for user ${userIdStr}: emailNotifications=${settings.emailNotifications}, newLeads=${settings.newLeads}`);
     } else {
       console.log(`✅ Notifications enabled for user ${userIdStr}`);
     }
-    
+
     return isEnabled;
   }
 
@@ -895,7 +908,7 @@ export class LeadsService {
   private async shouldSendBrowserPushNotification(userId: number | string): Promise<boolean> {
     // Convert userId to string (handles both number and UUID string)
     const userIdStr = typeof userId === 'number' ? userId.toString() : userId;
-    
+
     const settings = await this.notificationSettingsRepository.findOne({
       where: { userId: userIdStr },
     });
@@ -907,13 +920,13 @@ export class LeadsService {
 
     // Check if browser push is enabled (subscription check happens in push service)
     const isEnabled = settings.browserPush;
-    
+
     if (!isEnabled) {
       console.log(`⏭️  [BROWSER PUSH] Browser push disabled for user ${userIdStr}: browserPush=${settings.browserPush}`);
     } else {
       console.log(`✅ [BROWSER PUSH] Browser push enabled for user ${userIdStr}`);
     }
-    
+
     return isEnabled;
   }
 
@@ -921,7 +934,7 @@ export class LeadsService {
   private async shouldSendFollowUpNotification(userId: number | string): Promise<boolean> {
     // Convert userId to string (handles both number and UUID string)
     const userIdStr = typeof userId === 'number' ? userId.toString() : userId;
-    
+
     const settings = await this.notificationSettingsRepository.findOne({
       where: { userId: userIdStr },
     });
@@ -934,11 +947,11 @@ export class LeadsService {
 
     // Check if email notifications and follow-up notifications are enabled
     const isEnabled = settings.emailNotifications && settings.followUps;
-    
+
     if (!isEnabled) {
       console.log(`Follow-up notifications disabled for user ${userIdStr}: emailNotifications=${settings.emailNotifications}, followUps=${settings.followUps}`);
     }
-    
+
     return isEnabled;
   }
 
@@ -983,30 +996,28 @@ export class LeadsService {
     // Send notifications to each user sequentially with delays (to avoid bulk sending)
     // Gap of 2 seconds between each email
     const EMAIL_DELAY_MS = 2000; // 2 seconds delay between emails
-    
+
     for (let i = 0; i < users.length; i++) {
       const user = users[i];
-      
+
       try {
         // Check notification settings for this specific user ID
-        // Handle both number and UUID string user IDs
         const userId = user.id;
         console.log(`[${i + 1}/${users.length}] Checking notification settings for user ID: ${userId} (type: ${typeof userId}), email: ${user.email}`);
-        
+
         // Get notification settings once
-        const userIdStr = typeof userId === 'number' ? userId.toString() : userId;
         const settings = await this.notificationSettingsRepository.findOne({
-          where: { userId: userIdStr },
+          where: { userId: userId },
         });
 
         if (!settings) {
-          console.log(`⏭️  No notification settings found for user ${userIdStr}, skipping notifications`);
+          console.log(`\u23ED\uFE0F  No notification settings found for user ${userId}, skipping notifications`);
           continue;
         }
 
         // Check if newLeads notifications are enabled (required for both email and push)
         const newLeadsEnabled = settings.newLeads;
-        
+
         if (!newLeadsEnabled) {
           console.log(`✗ Skipping all notifications for user ${userId} (${user.email}): newLeads disabled`);
           continue;
@@ -1058,7 +1069,7 @@ export class LeadsService {
         } else {
           console.log(`⏭️  Skipping browser push notification for user ${userId}: browserPush=${settings.browserPush}, newLeads=${newLeadsEnabled}`);
         }
-        
+
         // Add delay before sending next email (only if email was sent, to avoid bulk sending)
         if (emailSent && i < users.length - 1) {
           console.log(`⏳ Waiting ${EMAIL_DELAY_MS / 1000} seconds before sending next email...`);
@@ -1069,15 +1080,15 @@ export class LeadsService {
         // Continue with next user even if one fails
       }
     }
-    
-    console.log(`📧 Notification process completed for lead ${lead.id}. Processed ${users.length} users.`);
+
+    console.log(`\uD83D\uDCE7 Notification process completed for lead ${lead.id}. Processed ${users.length} users.`);
   }
 
   // Method to send follow-up reminders to ALL company users (can be called by scheduled job at 12:00 PM)
   // Sends reminders to all admins and sub-users in the company with delays between emails
   async sendFollowUpReminders(): Promise<{ sent: number; errors: number; skipped: number }> {
     console.log('🔔 Starting follow-up reminders job at:', new Date().toLocaleString());
-    
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -1137,23 +1148,23 @@ export class LeadsService {
       // Send reminder to each user in the company with delays
       for (let i = 0; i < companyUsers.length; i++) {
         const user = companyUsers[i];
-        
+
         try {
           // Check if user has follow-up notifications enabled
           const userId = user.id;
           console.log(`   [${i + 1}/${companyUsers.length}] Checking notification settings for user ${userId} (${user.email})`);
-          
+
           // Check notification settings (fetch once and reuse)
           const notificationSettings = await this.notificationSettingsRepository.findOne({
-            where: { userId: userId.toString() },
+            where: { userId: userId },
           });
-          
+
           // Check if follow-ups email notifications are enabled (for email)
           // For browser push, we check browserPush separately below
-          const shouldNotifyEmail = notificationSettings && 
-            notificationSettings.emailNotifications && 
+          const shouldNotifyEmail = notificationSettings &&
+            notificationSettings.emailNotifications &&
             notificationSettings.followUps;
-          
+
           if (!shouldNotifyEmail && (!notificationSettings || !notificationSettings.browserPush)) {
             console.log(`   ✗ Skipping user ${userId} (${user.email}): follow-up notifications disabled`);
             skipped++;
@@ -1178,13 +1189,13 @@ export class LeadsService {
           } else {
             console.log(`   ⏭️  Skipping email for user ${userId} (${user.email}): email notifications or follow-ups disabled`);
           }
-          
+
           // Send browser push notification if browserPush is enabled
           // No need to check followUps - if browserPush is true, send browser notifications automatically
           if (notificationSettings && notificationSettings.browserPush) {
             // Send push notification (non-blocking)
             this.pushNotificationService.sendFollowUpNotification(
-              userId.toString(),
+              userId,
               lead.name,
               lead.id as any,
               lead.nextFollowupDate,
@@ -1224,7 +1235,7 @@ export class LeadsService {
   }
 
   // Method to send follow-up reminder for a specific lead to ALL company users (can be called manually)
-  async sendFollowUpReminderForLead(leadId: string, userId: number): Promise<{ sent: number; skipped: number }> {
+  async sendFollowUpReminderForLead(leadId: string, userId: string): Promise<{ sent: number; skipped: number }> {
     const lead = await this.leadRepository.findOne({
       where: { id: leadId },
       relations: ['user'],
@@ -1236,7 +1247,7 @@ export class LeadsService {
 
     // Check access - user should be able to see this lead
     const userPermissions = await this.userPermissionsRepository.findOne({
-      where: { userId: userId.toString() },
+      where: { userId: userId },
       relations: ['parentUser'],
     });
 
@@ -1286,12 +1297,12 @@ export class LeadsService {
     // Send reminder to each user in the company with delays
     for (let i = 0; i < companyUsers.length; i++) {
       const user = companyUsers[i];
-      
+
       try {
         // Check if user has follow-up notifications enabled
         const userIdToCheck = user.id;
         const shouldNotify = await this.shouldSendFollowUpNotification(userIdToCheck);
-        
+
         if (!shouldNotify) {
           console.log(`✗ Skipping user ${userIdToCheck} (${user.email}): follow-up notifications disabled`);
           skipped++;
@@ -1309,13 +1320,13 @@ export class LeadsService {
           lead.additionalNotes,
         );
         console.log(`✅ Email sent successfully to ${user.email}`);
-        
+
         // Check if browser push is enabled before sending push notification
         const shouldSendPush = await this.shouldSendBrowserPushNotification(userIdToCheck);
         if (shouldSendPush) {
           // Send push notification (non-blocking)
           this.pushNotificationService.sendFollowUpNotification(
-            userIdToCheck.toString(),
+            userIdToCheck,
             lead.name,
             lead.id as any,
             lead.nextFollowupDate,
@@ -1331,7 +1342,7 @@ export class LeadsService {
         } else {
           console.log(`⏭️  Skipping browser push notification for user ${userIdToCheck} (browser push not enabled or no token)`);
         }
-        
+
         sent++;
 
         // Add delay before sending next email (except for the last one)
@@ -1349,14 +1360,14 @@ export class LeadsService {
     return { sent, skipped };
   }
 
-  async getDistinctCities(userId: number): Promise<string[]> {
+  async getDistinctCities(userId: string): Promise<string[]> {
     try {
       // Check if user is a sub-user
       const userPermissions = await this.userPermissionsRepository.findOne({
-        where: { userId: userId.toString() },
+        where: { userId: userId },
         relations: ['parentUser'],
       });
-      
+
       let effectiveUserId = userId;
       let companyName: string | undefined;
       let isSubUser = false;
@@ -1367,20 +1378,20 @@ export class LeadsService {
         if (!userPermissions.canViewLeads) {
           throw new ForbiddenException('You do not have permission to view leads');
         }
-        
+
         // Use parent user from relation (already loaded)
         const parentUser = userPermissions.parentUser;
-        
+
         if (!parentUser) {
           throw new NotFoundException(
             `Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`
           );
         }
-        
+
         if (!parentUser.isActive) {
           throw new ForbiddenException('Your parent account is inactive. Please contact your administrator.');
         }
-        
+
         // Use parent user's ID (may be UUID string or number depending on DB schema)
         effectiveUserId = parentUser.id as any;
         companyName = parentUser.companyName;
@@ -1527,22 +1538,22 @@ export class LeadsService {
     // Map user data if available
     const userData: UserResponseDto | undefined = lead.user
       ? {
-          id: lead.user.id,
-          email: lead.user.email,
-          fullName: lead.user.fullName,
-          role: lead.user.customRole || lead.user.role,
-          customRole: lead.user.customRole,
-          companyName: lead.user.companyName,
-          companySize: lead.user.companySize,
-          industry: lead.user.industry,
-          website: lead.user.website,
-          phoneNumber: lead.user.phoneNumber,
-          subscriptionStatus: lead.user.subscriptionStatus,
-          subscriptionPlan: lead.user.subscriptionPlan,
-          isActive: lead.user.isActive,
-          createdAt: lead.user.createdAt,
-          updatedAt: lead.user.updatedAt,
-        }
+        id: lead.user.id,
+        email: lead.user.email,
+        fullName: lead.user.fullName,
+        role: lead.user.customRole || lead.user.role,
+        customRole: lead.user.customRole,
+        companyName: lead.user.companyName,
+        companySize: lead.user.companySize,
+        industry: lead.user.industry,
+        website: lead.user.website,
+        phoneNumber: lead.user.phoneNumber,
+        subscriptionStatus: lead.user.subscriptionStatus,
+        subscriptionPlan: lead.user.subscriptionPlan,
+        isActive: lead.user.isActive,
+        createdAt: lead.user.createdAt,
+        updatedAt: lead.user.updatedAt,
+      }
       : undefined;
 
     return {
@@ -1580,4 +1591,3 @@ export class LeadsService {
     };
   }
 }
-

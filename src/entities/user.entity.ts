@@ -1,7 +1,7 @@
 import {
   Entity,
   Column,
-  PrimaryGeneratedColumn,
+  PrimaryColumn,
   CreateDateColumn,
   UpdateDateColumn,
   Index,
@@ -10,8 +10,8 @@ import {
 @Entity('users')
 @Index(['email'], { unique: true })
 export class User {
-  @PrimaryGeneratedColumn('increment')
-  id: number; // Single or double digit integer (1, 2, 3, ... 99)
+  @PrimaryColumn({ type: 'varchar', length: 255, default: () => 'uuid_generate_v4()' })
+  id: string;
 
   @Column({ name: 'name', type: 'varchar', length: 255 })
   fullName: string; // Maps to 'name' column in database

@@ -28,7 +28,7 @@ export class LeadResponseDto {
   additionalNotes?: string;
   sector?: string;
   customSector?: string;
-  userId: number;
+  userId: string;
   user?: UserResponseDto; // Include full user data
   createdAt?: Date;
   updatedAt?: Date;

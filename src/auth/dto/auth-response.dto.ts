@@ -3,7 +3,7 @@ export class AuthResponseDto {
   accessToken?: string;
   refreshToken?: string;
   user?: {
-    id: number; // Integer ID (1, 2, 3, ...)
+    id: string; // UUID string ID
     email: string;
     fullName: string;
     role: string;

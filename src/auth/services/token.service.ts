@@ -9,7 +9,7 @@ export class TokenService {
   constructor(
     @InjectRepository(Token)
     private tokenRepository: Repository<Token>,
-  ) {}
+  ) { }
 
   /**
    * Generate a secure random token (256 characters long)
@@ -22,7 +22,7 @@ export class TokenService {
   /**
    * Create access token
    */
-  async createAccessToken(userId: number): Promise<string> {
+  async createAccessToken(userId: string): Promise<string> {
     const token = this.generateToken();
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 1); // 1 hour expiration
@@ -40,7 +40,7 @@ export class TokenService {
   /**
    * Create refresh token
    */
-  async createRefreshToken(userId: number): Promise<string> {
+  async createRefreshToken(userId: string): Promise<string> {
     const token = this.generateToken();
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiration
@@ -91,7 +91,7 @@ export class TokenService {
   /**
    * Delete all tokens for a user
    */
-  async deleteUserTokens(userId: number): Promise<void> {
+  async deleteUserTokens(userId: string): Promise<void> {
     await this.tokenRepository.delete({ userId });
   }
 

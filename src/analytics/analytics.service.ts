@@ -16,16 +16,16 @@ export class AnalyticsService {
     private userRepository: Repository<User>,
     @InjectRepository(UserPermissions)
     private userPermissionsRepository: Repository<UserPermissions>,
-  ) {}
+  ) { }
 
-  async getAnalytics(userId: number, days: number = 7): Promise<AnalyticsResponseDto> {
+  async getAnalytics(userId: string, days: number = 7): Promise<AnalyticsResponseDto> {
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
     // Check if user is a sub-user
     const userPermissions = await this.userPermissionsRepository.findOne({
-      where: { userId: userId.toString() },
+      where: { userId: userId },
       relations: ['parentUser'],
     });
 
@@ -39,7 +39,7 @@ export class AnalyticsService {
       if (!parentUser) {
         throw new NotFoundException(`Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`);
       }
-      effectiveUserId = parentUser.id as any;
+      effectiveUserId = parentUser.id;
       companyName = parentUser.companyName;
     } else {
       // Regular user: get their company
@@ -180,41 +180,41 @@ export class AnalyticsService {
     const convertedLeads = allLeads.filter((l) => l.leadStatus === LeadStatus.CONVERTED).length;
     const hotLeads = allLeads.filter((l) => l.leadStatus === LeadStatus.HOT).length;
     const potentialCustomers = allLeads.filter((l) => l.customerCategory === CustomerCategory.POTENTIAL).length;
-    
+
     const newThisWeek = thisWeekLeads.filter((l) => l.leadStatus === LeadStatus.NEW).length;
-    const pendingFollowups = allLeads.filter((l) => 
+    const pendingFollowups = allLeads.filter((l) =>
       l.leadStatus === LeadStatus.FOLLOWUP && l.nextFollowupDate
     ).length;
-    
+
     const today = new Date();
     const weekEnd = new Date(today);
     weekEnd.setDate(today.getDate() + 7);
     weekEnd.setHours(23, 59, 59, 999);
-    
+
     const dueThisWeek = allLeads.filter((l) => {
       if (!l.nextFollowupDate) return false;
       const followupDate = new Date(l.nextFollowupDate);
       return followupDate >= today && followupDate <= weekEnd;
     }).length;
-    
+
     const qualifiedLeads = allLeads.filter((l) => l.leadStatus === LeadStatus.QUALIFIED).length;
-    const readyToConvert = allLeads.filter((l) => 
+    const readyToConvert = allLeads.filter((l) =>
       l.leadStatus === LeadStatus.QUALIFIED || l.leadStatus === LeadStatus.HOT
     ).length;
     const highPriority = hotLeads;
-    
+
     const convertedCustomers = thisMonthLeads.filter((l) => l.leadStatus === LeadStatus.CONVERTED).length;
     const lostOpportunities = thisMonthLeads.filter((l) => l.leadStatus === LeadStatus.LOST).length;
-    
+
     // Calculate conversion rate (converted / total)
     const conversionRate = totalLeads > 0 ? (convertedLeads / totalLeads) * 100 : 0;
-    
+
     // Calculate success rate (converted / (converted + lost))
     const totalProcessed = convertedLeads + lostOpportunities;
     const successRate = totalProcessed > 0 ? (convertedLeads / totalProcessed) * 100 : 0;
-    
+
     // Calculate average conversion time
-    const convertedLeadsWithDates = allLeads.filter((l) => 
+    const convertedLeadsWithDates = allLeads.filter((l) =>
       l.leadStatus === LeadStatus.CONVERTED && l.createdAt && l.updatedAt
     );
     let avgConversionTime = 0;
@@ -251,11 +251,11 @@ export class AnalyticsService {
 
   private async calculateFollowupTimeline(
     companyName: string | undefined,
-    effectiveUserId: number,
+    effectiveUserId: string,
   ): Promise<FollowupTimelineDto> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     const weekEnd = new Date(today);
     weekEnd.setDate(today.getDate() + 7);
     weekEnd.setHours(23, 59, 59, 999);
@@ -375,11 +375,11 @@ export class AnalyticsService {
 
   private async getNext7DaysFollowups(
     companyName: string | undefined,
-    effectiveUserId: number,
+    effectiveUserId: string,
   ): Promise<any[]> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     const weekEnd = new Date(today);
     weekEnd.setDate(today.getDate() + 7);
     weekEnd.setHours(23, 59, 59, 999);
@@ -423,7 +423,7 @@ export class AnalyticsService {
       if (created < startDate || created > endDate) return;
 
       const monthKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`;
-      
+
       if (!trends.has(monthKey)) {
         trends.set(monthKey, { leads: 0, converted: 0, lost: 0 });
       }

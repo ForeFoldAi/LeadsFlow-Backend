@@ -1,5 +1,5 @@
 export class UserResponseDto {
-  id: number; // Integer ID (1, 2, 3, ...)
+  id: string; // User ID (UUID string)
   email: string;
   fullName: string;
   role: string;

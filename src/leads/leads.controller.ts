@@ -29,7 +29,7 @@ import { TokenAuthGuard } from '../auth/guards/token-auth.guard';
 @Controller('leads')
 @UseGuards(TokenAuthGuard) // All leads endpoints require authentication
 export class LeadsController {
-  constructor(private readonly leadsService: LeadsService) {}
+  constructor(private readonly leadsService: LeadsService) { }
 
   @Get('export')
   async exportLeads(
@@ -137,7 +137,7 @@ export class LeadsController {
     @Request() req,
     @Param('id') id: string,
   ): Promise<{ message: string }> {
-    const userId = req.user.sub; // Get userId from authenticated user
+    const userId: string = req.user.sub; // Get userId from authenticated user
     await this.leadsService.sendFollowUpReminderForLead(id, userId);
     return { message: 'Follow-up reminder sent successfully' };
   }

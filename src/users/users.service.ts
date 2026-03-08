@@ -9,7 +9,7 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
-  ) {}
+  ) { }
 
   async findAll(): Promise<UserResponseDto[]> {
     const users = await this.userRepository.find({
@@ -22,7 +22,7 @@ export class UsersService {
     return users.map((user) => this.mapToResponseDto(user));
   }
 
-  async findOne(id: number): Promise<UserResponseDto | null> {
+  async findOne(id: string): Promise<UserResponseDto | null> {
     const user = await this.userRepository.findOne({
       where: { id },
     });

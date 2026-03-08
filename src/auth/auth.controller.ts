@@ -24,7 +24,7 @@ import { TokenAuthGuard } from './guards/token-auth.guard';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService) { }
 
   @Post('signup')
   @HttpCode(HttpStatus.CREATED)
@@ -117,7 +117,7 @@ export class AuthController {
     valid: boolean;
     message: string;
     user?: {
-      id: number;
+      id: string;
       email: string;
       fullName: string;
       role: string;
@@ -161,7 +161,7 @@ export class AuthController {
   @Get('test-auth')
   @UseGuards(TokenAuthGuard)
   @HttpCode(HttpStatus.OK)
-  async testAuth(@Request() req): Promise<{ success: boolean; userId: number; message: string }> {
+  async testAuth(@Request() req): Promise<{ success: boolean; userId: string; message: string }> {
     return {
       success: true,
       userId: req.user.sub,

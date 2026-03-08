@@ -134,8 +134,8 @@ export class Lead {
   @Column({ name: 'custom_sector', type: 'varchar', length: 255, nullable: true })
   customSector?: string;
 
-  @Column({ name: 'user_id', type: 'integer' })
-  userId: number; // Integer to match User.id
+  @Column({ name: 'user_id', type: 'varchar', length: 255 })
+  userId: string; // Foreign key to User.id
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })

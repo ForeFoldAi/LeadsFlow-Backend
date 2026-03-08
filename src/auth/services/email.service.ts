@@ -11,7 +11,9 @@ export class EmailService {
     const smtpSecure = this.configService.get<string>('SMTP_SECURE');
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     const smtpUser = this.configService.get<string>('SMTP_USER');
-    
+    const timeoutMsRaw = this.configService.get<string>('SMTP_TIMEOUT_MS');
+    const timeoutMs = timeoutMsRaw ? parseInt(timeoutMsRaw, 10) : 30000;
+
     // Log SMTP configuration (without password) for debugging
     console.log('📧 SMTP Configuration:');
     console.log(`   Host: ${smtpHost || 'NOT SET'}`);
@@ -19,21 +21,27 @@ export class EmailService {
     console.log(`   Secure: ${smtpSecure || 'NOT SET'}`);
     console.log(`   User: ${smtpUser || 'NOT SET'}`);
     console.log(`   Password: ${this.configService.get<string>('SMTP_PASS') ? '****' + this.configService.get<string>('SMTP_PASS')?.slice(-4) : 'NOT SET'}`);
-    
+    console.log(`   Timeout: ${Number.isFinite(timeoutMs) ? `${timeoutMs}ms` : 'NOT SET'}`);
+
     this.transporter = nodemailer.createTransport({
       host: smtpHost,
       port: smtpPort ? parseInt(smtpPort, 10) : 465,
       secure: smtpSecure === 'true' || smtpSecure === '1', // true for 465, false for other ports
+      requireTLS: smtpPort === '587', // Force TLS for port 587
       auth: {
         user: smtpUser,
         pass: this.configService.get<string>('SMTP_PASS'),
       },
       // Add connection timeout and logging
-      connectionTimeout: 10000, // 10 seconds
-      greetingTimeout: 10000,
-      socketTimeout: 10000,
-      debug: false, // Set to true for detailed logs
-      logger: false, // Set to true for detailed logs
+      connectionTimeout: timeoutMs,
+      greetingTimeout: timeoutMs,
+      socketTimeout: timeoutMs,
+      debug: true, // Enable detailed logs
+      logger: true, // Enable detailed logs
+      tls: {
+        servername: smtpHost,
+        rejectUnauthorized: false // Bypass certificate issues
+      }
     });
   }
 
@@ -41,14 +49,14 @@ export class EmailService {
    * Get ForeFold branded email footer HTML
    * Includes logo, contact information, and company details
    */
-  private getEmailFooter(): string {
+  public getEmailFooter(): string {
     // Logo options (choose one):
     // Option 1: Public CDN URL (update with your actual logo URL)
     // const logoUrl = 'https://forefoldai.com/assets/logo.png';
-    
+
     // Option 2: Self-hosted from your backend (if serving static files)
     // const logoUrl = `${this.configService.get<string>('BACKEND_URL')}/public/image.png`;
-    
+
     // Option 3: Use text-based logo as fallback (current - most reliable for emails)
     const logoHtml = `
       <div style="text-align: center; margin-bottom: 20px;">
@@ -60,7 +68,7 @@ export class EmailService {
         </p>
       </div>
     `;
-    
+
     return `
       <div style="margin-top: 40px; padding-top: 30px; border-top: 2px solid #e0e0e0;">
         ${logoHtml}
@@ -104,9 +112,80 @@ export class EmailService {
     `;
   }
 
+  /**
+   * Wraps plain text content in a professional HTML template
+   */
+  public wrapInBrandedTemplate(title: string, content: string): string {
+    // Convert newlines to breaks for plain text compatibility
+    const formattedContent = content.replace(/\n/g, '<br />');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${title}</title>
+      </head>
+      <body style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #ffffff;">
+        <div style="padding: 20px;">
+          <h2 style="color: #1a365d; margin-top: 0; font-size: 24px;">${title}</h2>
+          <div style="font-size: 16px; color: #2d3748; margin-bottom: 30px;">
+            ${formattedContent}
+          </div>
+          ${this.getEmailFooter()}
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  /** Transient SMTP errors that may succeed on retry (ECONNRESET, ETIMEDOUT, etc.) */
+  private static readonly RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'ESOCKET', 'EPIPE', 'ENOTFOUND']);
+
+  async sendMail(to: string, subject: string, html: string, text?: string): Promise<void> {
+    const from = this.configService.get<string>('SMTP_FROM') || this.configService.get<string>('SMTP_USER');
+    const maxRetries = 3;
+    const retryDelayMs = 2000;
+
+    const mailOptions = {
+      from: from,
+      to: to,
+      subject: subject,
+      html: html,
+      text: text || '',
+    };
+
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await this.transporter.sendMail(mailOptions);
+        return;
+      } catch (error) {
+        lastError = error as Error;
+        const err = error as any;
+        const code = err?.code ? String(err.code) : '';
+        const isRetryable = EmailService.RETRYABLE_CODES.has(code) || (err?.message && /timeout|reset|refused/i.test(String(err.message)));
+        if (isRetryable && attempt < maxRetries) {
+          console.warn(`SMTP attempt ${attempt}/${maxRetries} failed (${code}), retrying in ${retryDelayMs}ms...`);
+          await new Promise((r) => setTimeout(r, retryDelayMs));
+        } else {
+          break;
+        }
+      }
+    }
+
+    console.error('Error sending generic email:', lastError);
+    const err = lastError as any;
+    const code = err?.code ? String(err.code) : undefined;
+    const message = err?.message ? String(err.message) : 'Unknown email error';
+    const details = [code && `code=${code}`, `message=${message}`].filter(Boolean).join(' ');
+    throw new Error(details || 'Failed to send email');
+  }
+
   async sendPasswordResetOtp(email: string, otp: string): Promise<void> {
     const from = this.configService.get<string>('SMTP_FROM') || this.configService.get<string>('SMTP_USER');
-    
+
     const mailOptions = {
       from: from,
       to: email,
@@ -148,7 +227,7 @@ export class EmailService {
 
   async sendPasswordResetSuccess(email: string): Promise<void> {
     const from = this.configService.get<string>('SMTP_FROM') || this.configService.get<string>('SMTP_USER');
-    
+
     const mailOptions = {
       from: from,
       to: email,
@@ -186,7 +265,7 @@ export class EmailService {
 
   async send2faOtp(email: string, otp: string): Promise<void> {
     const from = this.configService.get<string>('SMTP_FROM') || this.configService.get<string>('SMTP_USER');
-    
+
     const mailOptions = {
       from: from,
       to: email,
@@ -228,7 +307,7 @@ export class EmailService {
 
   async send2faSetupConfirmation(email: string, otp: string): Promise<void> {
     const from = this.configService.get<string>('SMTP_FROM') || this.configService.get<string>('SMTP_USER');
-    
+
     const mailOptions = {
       from: from,
       to: email,
@@ -294,7 +373,7 @@ export class EmailService {
     createdBy?: string,
   ): Promise<void> {
     const from = this.configService.get<string>('SMTP_FROM') || this.configService.get<string>('SMTP_USER');
-    
+
     const mailOptions = {
       from: from,
       to: email,
@@ -347,17 +426,17 @@ export class EmailService {
     notes?: string,
   ): Promise<void> {
     const from = this.configService.get<string>('SMTP_FROM') || this.configService.get<string>('SMTP_USER');
-    
+
     // Ensure followUpDate is a Date object
     const dateObj = followUpDate instanceof Date ? followUpDate : new Date(followUpDate);
-    
+
     const formattedDate = dateObj.toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric',
     });
-    
+
     const mailOptions = {
       from: from,
       to: email,
@@ -410,7 +489,7 @@ export class EmailService {
    */
   async sendTestEmail(toEmail: string): Promise<{ success: boolean; message: string; error?: string }> {
     const from = this.configService.get<string>('SMTP_FROM') || this.configService.get<string>('SMTP_USER');
-    
+
     // First, verify the SMTP connection
     try {
       console.log('🔍 Testing SMTP connection...');

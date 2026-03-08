@@ -10,6 +10,9 @@ import { LeadsModule } from './leads/leads.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ProfileModule } from './profile/profile.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { TemplatesModule } from './templates/templates.module';
+import { CommunicationModule } from './communication/communication.module';
+import { AutomationModule } from './automation/automation.module';
 import { User } from './entities/user.entity';
 import { Token } from './entities/token.entity';
 import { Lead } from './entities/lead.entity';
@@ -21,6 +24,9 @@ import { SecuritySettings } from './entities/security-settings.entity';
 import { UserPermissions } from './entities/user-permissions.entity';
 import { CustomSector } from './entities/custom-sector.entity';
 import { PushSubscription } from './entities/push-subscription.entity';
+import { CommunicationTemplate } from './entities/communication-template.entity';
+import { CommunicationLog } from './entities/communication-log.entity';
+import { AutomationSchedule } from './entities/automation-schedule.entity';
 
 @Module({
   imports: [
@@ -34,7 +40,7 @@ import { PushSubscription } from './entities/push-subscription.entity';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
         const databaseUrl = configService.get<string>('DATABASE_URL');
-        
+
         if (!databaseUrl) {
           throw new Error('DATABASE_URL is not defined in environment variables');
         }
@@ -49,7 +55,7 @@ import { PushSubscription } from './entities/push-subscription.entity';
 
         // Check if SSL should be enabled (default: false for local/dev, true for production)
         const enableSsl = configService.get<string>('DATABASE_SSL') === 'true';
-        
+
         return {
           type: 'postgres',
           host: match[4],
@@ -69,6 +75,9 @@ import { PushSubscription } from './entities/push-subscription.entity';
             UserPermissions,
             CustomSector,
             PushSubscription,
+            CommunicationTemplate,
+            CommunicationLog,
+            AutomationSchedule,
           ],
           synchronize: false, // Disabled - database already exists
           logging: process.env.NODE_ENV === 'development',
@@ -87,8 +96,11 @@ import { PushSubscription } from './entities/push-subscription.entity';
     AnalyticsModule,
     ProfileModule,
     NotificationsModule,
+    TemplatesModule,
+    CommunicationModule,
+    AutomationModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

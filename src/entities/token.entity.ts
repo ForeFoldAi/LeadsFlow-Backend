@@ -16,8 +16,8 @@ export class Token {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'user_id', type: 'integer' })
-  userId: number; // Integer to match User.id
+  @Column({ name: 'user_id', type: 'varchar', length: 255 })
+  userId: string; // Foreign key to User.id
 
   @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })

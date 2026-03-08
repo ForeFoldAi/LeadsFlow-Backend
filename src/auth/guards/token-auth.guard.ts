@@ -8,7 +8,7 @@ import { AuthService } from '../auth.service';
 
 @Injectable()
 export class TokenAuthGuard implements CanActivate {
-  constructor(private authService: AuthService) {}
+  constructor(private authService: AuthService) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -27,6 +27,7 @@ export class TokenAuthGuard implements CanActivate {
 
     // Attach user to request
     request.user = {
+      id: user.id,
       sub: user.id,
       email: user.email,
       role: user.customRole || user.role,

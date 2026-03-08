@@ -44,10 +44,10 @@ export class ProfileService {
     private securitySettingsRepository: Repository<SecuritySettings>,
     @InjectRepository(UserPermissions)
     private userPermissionsRepository: Repository<UserPermissions>,
-  ) {}
+  ) { }
 
   // Get User Profile Method
-  async getUserProfile(userId: number): Promise<SubUserResponseDto> {
+  async getUserProfile(userId: string): Promise<SubUserResponseDto> {
     const user = await this.userRepository.findOne({
       where: { id: userId },
     });
@@ -58,7 +58,7 @@ export class ProfileService {
 
     // Check if user is a sub-user and get permissions
     const userPermissions = await this.userPermissionsRepository.findOne({
-      where: { userId: userId.toString() },
+      where: { userId: userId },
       relations: ['parentUser'],
     });
 
@@ -72,17 +72,15 @@ export class ProfileService {
   }
 
   // Profile Preferences Methods
-  async getProfilePreferences(userId: number): Promise<ProfilePreferencesResponseDto> {
-    const userIdStr = userId.toString();
-
+  async getProfilePreferences(userId: string): Promise<ProfilePreferencesResponseDto> {
     // Get or create notification settings
     let notificationSettings = await this.notificationSettingsRepository.findOne({
-      where: { userId: userIdStr },
+      where: { userId: userId },
     });
 
     if (!notificationSettings) {
       notificationSettings = this.notificationSettingsRepository.create({
-        userId: userIdStr,
+        userId: userId,
         newLeads: true,
         followUps: true,
         hotLeads: true,
@@ -96,12 +94,12 @@ export class ProfileService {
 
     // Get or create security settings
     let securitySettings = await this.securitySettingsRepository.findOne({
-      where: { userId: userIdStr },
+      where: { userId: userId },
     });
 
     if (!securitySettings) {
       securitySettings = this.securitySettingsRepository.create({
-        userId: userIdStr,
+        userId: userId,
         twoFactorEnabled: false,
         loginNotifications: true,
         sessionTimeout: '30',
@@ -112,12 +110,12 @@ export class ProfileService {
 
     // Get or create user preferences
     let preferences = await this.userPreferencesRepository.findOne({
-      where: { userId: userIdStr },
+      where: { userId: userId },
     });
 
     if (!preferences) {
       preferences = this.userPreferencesRepository.create({
-        userId: userIdStr,
+        userId: userId,
         defaultView: 'table',
         itemsPerPage: '20',
         autoSave: true,
@@ -160,30 +158,29 @@ export class ProfileService {
   }
 
   async updateNotificationSettings(
-    userId: number,
+    userId: string,
     updateDto: UpdateNotificationSettingsDto,
   ): Promise<NotificationSettingsResponseDto> {
-    const userIdStr = userId.toString();
-    console.log(`Updating notification settings for user ${userIdStr}:`, updateDto);
-    
+    console.log(`Updating notification settings for user ${userId}:`, updateDto);
+
     let settings = await this.notificationSettingsRepository.findOne({
-      where: { userId: userIdStr },
+      where: { userId: userId },
     });
 
     if (!settings) {
-      console.log(`Creating new notification settings for user ${userIdStr}`);
-      
+      console.log(`Creating new notification settings for user ${userId}`);
+
       // Validate: If enabling browserPush, a push subscription must exist
       const browserPushValue = updateDto.browserPush ?? false;
       if (browserPushValue === true && !updateDto.pushSubscription) {
-        console.log(`❌ [NOTIFICATION SETTINGS] Cannot enable browserPush without a push subscription for user ${userIdStr}`);
+        console.log(`❌ [NOTIFICATION SETTINGS] Cannot enable browserPush without a push subscription for user ${userId}`);
         throw new BadRequestException(
           'Cannot enable browser notifications without a push subscription. Please subscribe to push notifications first by allowing browser notifications in your browser settings.'
         );
       }
-      
+
       settings = this.notificationSettingsRepository.create({
-        userId: userIdStr,
+        userId: userId,
         newLeads: updateDto.newLeads ?? true,
         followUps: updateDto.followUps ?? true,
         hotLeads: updateDto.hotLeads ?? true,
@@ -194,13 +191,13 @@ export class ProfileService {
         pushSubscription: updateDto.pushSubscription,
       });
     } else {
-      console.log(`Updating existing notification settings for user ${userIdStr}`);
+      console.log(`Updating existing notification settings for user ${userId}`);
       console.log(`Before update:`, {
         newLeads: settings.newLeads,
         followUps: settings.followUps,
         emailNotifications: settings.emailNotifications,
       });
-      
+
       // Only update fields that are explicitly provided (not undefined)
       // IMPORTANT: If emailNotifications is false but user is enabling newLeads/followUps,
       // we should keep emailNotifications as true (don't disable master toggle when enabling specific notifications)
@@ -213,7 +210,7 @@ export class ProfileService {
         if (updateDto.browserPush === true) {
           const hasSubscription = settings.pushSubscription || updateDto.pushSubscription;
           if (!hasSubscription) {
-            console.log(`❌ [NOTIFICATION SETTINGS] Cannot enable browserPush without a push subscription for user ${userIdStr}`);
+            console.log(`❌ [NOTIFICATION SETTINGS] Cannot enable browserPush without a push subscription for user ${userId}`);
             throw new BadRequestException(
               'Cannot enable browser notifications without a push subscription. Please subscribe to push notifications first by allowing browser notifications in your browser settings.'
             );
@@ -222,14 +219,14 @@ export class ProfileService {
         settings.browserPush = updateDto.browserPush;
       }
       if (updateDto.dailySummary !== undefined) settings.dailySummary = updateDto.dailySummary;
-      
+
       // Only update emailNotifications if explicitly provided AND it's true
       // If user is enabling newLeads/followUps, don't disable emailNotifications
       if (updateDto.emailNotifications !== undefined) {
         // If user is enabling specific notifications, ensure emailNotifications is true
-        if ((updateDto.newLeads === true || updateDto.followUps === true || 
-             updateDto.hotLeads === true || updateDto.conversions === true) &&
-            updateDto.emailNotifications === false) {
+        if ((updateDto.newLeads === true || updateDto.followUps === true ||
+          updateDto.hotLeads === true || updateDto.conversions === true) &&
+          updateDto.emailNotifications === false) {
           console.log(`Warning: User trying to disable emailNotifications while enabling specific notifications. Keeping emailNotifications=true.`);
           settings.emailNotifications = true; // Keep it enabled
         } else {
@@ -237,30 +234,30 @@ export class ProfileService {
         }
       } else {
         // If emailNotifications not provided but user is enabling notifications, ensure it's true
-        if (updateDto.newLeads === true || updateDto.followUps === true || 
-            updateDto.hotLeads === true || updateDto.conversions === true) {
+        if (updateDto.newLeads === true || updateDto.followUps === true ||
+          updateDto.hotLeads === true || updateDto.conversions === true) {
           if (!settings.emailNotifications) {
             console.log(`Auto-enabling emailNotifications because user enabled specific notifications`);
             settings.emailNotifications = true;
           }
         }
       }
-      
+
       if (updateDto.pushSubscription !== undefined) {
         settings.pushSubscription = updateDto.pushSubscription;
         // If subscription is being cleared and browserPush is enabled, disable browserPush
         if (!updateDto.pushSubscription && settings.browserPush) {
-          console.log(`⚠️  [NOTIFICATION SETTINGS] Push subscription cleared for user ${userIdStr}. Disabling browserPush.`);
+          console.log(`⚠️  [NOTIFICATION SETTINGS] Push subscription cleared for user ${userId}. Disabling browserPush.`);
           settings.browserPush = false;
         }
       }
-      
+
       // Also check: if browserPush is enabled but subscription is missing, disable browserPush
       if (settings.browserPush && !settings.pushSubscription) {
-        console.log(`⚠️  [NOTIFICATION SETTINGS] browserPush is enabled but no subscription exists for user ${userIdStr}. Disabling browserPush.`);
+        console.log(`⚠️  [NOTIFICATION SETTINGS] browserPush is enabled but no subscription exists for user ${userId}. Disabling browserPush.`);
         settings.browserPush = false;
       }
-      
+
       console.log(`After update:`, {
         newLeads: settings.newLeads,
         followUps: settings.followUps,
@@ -269,7 +266,7 @@ export class ProfileService {
     }
 
     settings = await this.notificationSettingsRepository.save(settings);
-    console.log(`Saved notification settings for user ${userIdStr}:`, {
+    console.log(`Saved notification settings for user ${userId}:`, {
       newLeads: settings.newLeads,
       followUps: settings.followUps,
       emailNotifications: settings.emailNotifications,
@@ -288,17 +285,16 @@ export class ProfileService {
   }
 
   async updateSecuritySettings(
-    userId: number,
+    userId: string,
     updateDto: UpdateSecuritySettingsDto,
   ): Promise<SecuritySettingsResponseDto> {
-    const userIdStr = userId.toString();
     let settings = await this.securitySettingsRepository.findOne({
-      where: { userId: userIdStr },
+      where: { userId: userId },
     });
 
     if (!settings) {
       settings = this.securitySettingsRepository.create({
-        userId: userIdStr,
+        userId: userId,
         ...updateDto,
         twoFactorEnabled: updateDto.twoFactorEnabled ?? false,
         loginNotifications: updateDto.loginNotifications ?? true,
@@ -323,17 +319,16 @@ export class ProfileService {
   }
 
   async updateUserPreferences(
-    userId: number,
+    userId: string,
     updateDto: UpdateUserPreferencesDto,
   ): Promise<UserPreferencesResponseDto> {
-    const userIdStr = userId.toString();
     let preferences = await this.userPreferencesRepository.findOne({
-      where: { userId: userIdStr },
+      where: { userId: userId },
     });
 
     if (!preferences) {
       preferences = this.userPreferencesRepository.create({
-        userId: userIdStr,
+        userId: userId,
         ...updateDto,
         defaultView: updateDto.defaultView ?? 'table',
         itemsPerPage: updateDto.itemsPerPage ?? '20',
@@ -359,7 +354,7 @@ export class ProfileService {
   }
 
   // Sub-User Management Methods
-  async getAllSubUsers(parentUserId: number): Promise<SubUserResponseDto[]> {
+  async getAllSubUsers(parentUserId: string): Promise<SubUserResponseDto[]> {
     // Get parent user to verify role
     const parentUser = await this.userRepository.findOne({
       where: { id: parentUserId },
@@ -375,9 +370,8 @@ export class ProfileService {
       throw new BadRequestException('Only Management role users can access sub-users');
     }
 
-    const parentUserIdStr = parentUserId.toString();
     const permissions = await this.userPermissionsRepository.find({
-      where: { parentUserId: parentUserIdStr },
+      where: { parentUserId: parentUserId },
       relations: ['user', 'parentUser'],
     });
 
@@ -385,7 +379,7 @@ export class ProfileService {
   }
 
   async createSubUser(
-    parentUserId: number,
+    parentUserId: string,
     createDto: CreateSubUserDto,
   ): Promise<SubUserResponseDto> {
     // Get parent user to verify role and get company
@@ -446,8 +440,8 @@ export class ProfileService {
 
     // Create permissions
     const permissions = this.userPermissionsRepository.create({
-      userId: savedUser.id.toString(),
-      parentUserId: parentUserId.toString(),
+      userId: savedUser.id,
+      parentUserId: parentUserId,
       canViewLeads: createDto.canViewLeads ?? true,
       canEditLeads: createDto.canEditLeads ?? false,
       canAddLeads: createDto.canAddLeads ?? false,
@@ -458,7 +452,7 @@ export class ProfileService {
 
     // Reload with permissions
     const savedPermissions = await this.userPermissionsRepository.findOne({
-      where: { userId: savedUser.id.toString() },
+      where: { userId: savedUser.id },
       relations: ['user', 'parentUser'],
     });
 
@@ -466,7 +460,7 @@ export class ProfileService {
   }
 
   async updateSubUserPermissions(
-    parentUserId: number,
+    parentUserId: string,
     subUserId: string,
     updateDto: UpdateSubUserPermissionsDto,
   ): Promise<SubUserResponseDto> {
@@ -489,7 +483,7 @@ export class ProfileService {
     const permissions = await this.userPermissionsRepository.findOne({
       where: {
         userId: subUserId,
-        parentUserId: parentUserId.toString(),
+        parentUserId: parentUserId,
       },
       relations: ['user', 'parentUser'],
     });
@@ -510,7 +504,7 @@ export class ProfileService {
     return this.mapToSubUserResponse(permissions.user, updatedPermissions!);
   }
 
-  async deleteSubUser(parentUserId: number, subUserId: string): Promise<{ message: string }> {
+  async deleteSubUser(parentUserId: string, subUserId: string): Promise<{ message: string }> {
     // Get parent user to verify role
     const parentUser = await this.userRepository.findOne({
       where: { id: parentUserId },
@@ -530,7 +524,7 @@ export class ProfileService {
     const permissions = await this.userPermissionsRepository.findOne({
       where: {
         userId: subUserId,
-        parentUserId: parentUserId.toString(),
+        parentUserId: parentUserId,
       },
       relations: ['user'],
     });
@@ -539,15 +533,15 @@ export class ProfileService {
       throw new NotFoundException('Sub-user not found or access denied');
     }
 
-    // Delete user by numeric ID (user_permissions.user_id is string, but User.id is number)
-    await this.userRepository.delete({ id: permissions.user.id });
+    // Delete user
+    await this.userRepository.delete({ id: permissions.userId });
 
     return { message: 'Sub-user deleted successfully' };
   }
 
   // Profile Update Methods
   async updateProfile(
-    userId: number,
+    userId: string,
     updateDto: UpdateProfileDto,
   ): Promise<UserResponseDto> {
     const user = await this.userRepository.findOne({
@@ -617,7 +611,7 @@ export class ProfileService {
   }
 
   async changePassword(
-    userId: number,
+    userId: string,
     changePasswordDto: ChangePasswordDto,
   ): Promise<{ message: string }> {
     // Validate password match
@@ -652,14 +646,13 @@ export class ProfileService {
     await this.userRepository.save(user);
 
     // Update last password change in security settings
-    const userIdStr = userId.toString();
     let securitySettings = await this.securitySettingsRepository.findOne({
-      where: { userId: userIdStr },
+      where: { userId: userId },
     });
 
     if (!securitySettings) {
       securitySettings = this.securitySettingsRepository.create({
-        userId: userIdStr,
+        userId: userId,
         twoFactorEnabled: false,
         loginNotifications: true,
         sessionTimeout: '30',
@@ -715,11 +708,11 @@ export class ProfileService {
       createdAt: user.createdAt,
       permissions: permissions
         ? {
-            canViewLeads: permissions.canViewLeads,
-            canEditLeads: permissions.canEditLeads,
-            canAddLeads: permissions.canAddLeads,
-            canExportLeads: permissions.canExportLeads,
-          }
+          canViewLeads: permissions.canViewLeads,
+          canEditLeads: permissions.canEditLeads,
+          canAddLeads: permissions.canAddLeads,
+          canExportLeads: permissions.canExportLeads,
+        }
         : undefined,
       parentUserId: permissions?.parentUser
         ? permissions.parentUser.id

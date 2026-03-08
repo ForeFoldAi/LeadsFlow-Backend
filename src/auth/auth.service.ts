@@ -41,7 +41,7 @@ export class AuthService {
     private securitySettingsRepository: Repository<SecuritySettings>,
     private tokenService: TokenService,
     private emailService: EmailService,
-  ) {}
+  ) { }
 
   async signup(signupDto: SignupDto): Promise<AuthResponseDto> {
     // Validate password match
@@ -61,7 +61,7 @@ export class AuthService {
     // Hash password
     const hashedPassword = await bcrypt.hash(signupDto.password, 10);
 
-    // Create user (ID will be auto-generated as integer)
+    // Create user
     const userData: Partial<User> = {
       fullName: signupDto.fullName,
       email: signupDto.email,
@@ -124,7 +124,7 @@ export class AuthService {
 
     // Check if 2FA is enabled for this user
     const securitySettings = await this.securitySettingsRepository.findOne({
-      where: { userId: user.id.toString() },
+      where: { userId: user.id },
     });
 
     // If 2FA is enabled, require OTP verification instead of direct login
@@ -147,13 +147,13 @@ export class AuthService {
 
       // Invalidate all previous 2FA OTPs for this user
       await this.twoFactorOtpRepository.update(
-        { userId: user.id.toString(), used: false },
+        { userId: user.id, used: false },
         { used: true },
       );
 
       // Save new OTP
       const otpRecord = this.twoFactorOtpRepository.create({
-        userId: user.id.toString(),
+        userId: user.id,
         email: user.email.toLowerCase().trim(),
         otp,
         expiresAt,
@@ -229,7 +229,7 @@ export class AuthService {
     return { accessToken };
   }
 
-  async logout(userId: number): Promise<void> {
+  async logout(userId: string): Promise<void> {
     // Delete all tokens for the user
     await this.tokenService.deleteUserTokens(userId);
   }
@@ -287,13 +287,13 @@ export class AuthService {
 
     // Invalidate all previous OTPs for this user
     await this.passwordResetRepository.update(
-      { userId: user.id.toString(), used: false },
+      { userId: user.id, used: false },
       { used: true },
     );
 
     // Save new OTP
     const otpRecord = this.passwordResetRepository.create({
-      userId: user.id.toString(), // Convert number to string
+      userId: user.id,
       email: forgotPasswordDto.email,
       otp,
       expiresAt,
@@ -326,7 +326,7 @@ export class AuthService {
     // Find valid OTP
     const otpRecord = await this.passwordResetRepository.findOne({
       where: {
-        userId: user.id.toString(),
+        userId: user.id,
         email: verifyOtpDto.email,
         otp: verifyOtpDto.otp,
         used: false,
@@ -364,7 +364,7 @@ export class AuthService {
     // Verify OTP
     const otpRecord = await this.passwordResetRepository.findOne({
       where: {
-        userId: user.id.toString(),
+        userId: user.id,
         email: resetPasswordDto.email,
         otp: resetPasswordDto.otp,
         used: false,
@@ -403,7 +403,7 @@ export class AuthService {
     return { message: 'Password reset successfully' };
   }
 
-  private async generateTokens(userId: number): Promise<{
+  private async generateTokens(userId: string): Promise<{
     accessToken: string;
     refreshToken: string;
   }> {
@@ -452,13 +452,13 @@ export class AuthService {
 
     // Invalidate all previous 2FA OTPs for this user
     await this.twoFactorOtpRepository.update(
-      { userId: user.id.toString(), used: false },
+      { userId: user.id, used: false },
       { used: true },
     );
 
     // Save new OTP
     const otpRecord = this.twoFactorOtpRepository.create({
-      userId: user.id.toString(),
+      userId: user.id,
       email: send2faOtpDto.email.toLowerCase().trim(),
       otp,
       expiresAt,
@@ -484,7 +484,7 @@ export class AuthService {
     valid: boolean;
     message: string;
     user?: {
-      id: number;
+      id: string;
       email: string;
       fullName: string;
       role: string;
@@ -503,7 +503,7 @@ export class AuthService {
     // Find valid OTP
     const otpRecord = await this.twoFactorOtpRepository.findOne({
       where: {
-        userId: user.id.toString(),
+        userId: user.id,
         email: verify2faOtpDto.email,
         otp: verify2faOtpDto.otp,
         used: false,
@@ -560,7 +560,7 @@ export class AuthService {
 
     // Find valid OTP
     console.log(`🔍 Searching for OTP with:`, {
-      userId: user.id.toString(),
+      userId: user.id,
       email: verify2faOtpDto.email,
       otp: verify2faOtpDto.otp,
       used: false,
@@ -568,7 +568,7 @@ export class AuthService {
 
     const otpRecord = await this.twoFactorOtpRepository.findOne({
       where: {
-        userId: user.id.toString(),
+        userId: user.id,
         email: verify2faOtpDto.email,
         otp: verify2faOtpDto.otp,
         used: false,
@@ -579,7 +579,7 @@ export class AuthService {
     if (!otpRecord) {
       // Debug: Find any OTP records for this user
       const allUserOtps = await this.twoFactorOtpRepository.find({
-        where: { userId: user.id.toString() },
+        where: { userId: user.id },
         order: { createdAt: 'DESC' },
         take: 5,
       });
@@ -643,7 +643,7 @@ export class AuthService {
     return response;
   }
 
-  async enable2fa(userId: number): Promise<{ message: string }> {
+  async enable2fa(userId: string): Promise<{ message: string }> {
     const user = await this.userRepository.findOne({
       where: { id: userId },
     });
@@ -654,12 +654,12 @@ export class AuthService {
 
     // Get or create security settings
     let securitySettings = await this.securitySettingsRepository.findOne({
-      where: { userId: user.id.toString() },
+      where: { userId: user.id },
     });
 
     if (!securitySettings) {
       securitySettings = this.securitySettingsRepository.create({
-        userId: user.id.toString(),
+        userId: user.id,
         twoFactorEnabled: false,
         loginNotifications: true,
         sessionTimeout: '30',
@@ -693,13 +693,13 @@ export class AuthService {
 
     // Invalidate all previous 2FA OTPs for this user
     await this.twoFactorOtpRepository.update(
-      { userId: user.id.toString(), used: false },
+      { userId: user.id, used: false },
       { used: true },
     );
 
     // Save new OTP
     const otpRecord = this.twoFactorOtpRepository.create({
-      userId: user.id.toString(),
+      userId: user.id,
       email: user.email.toLowerCase().trim(),
       otp,
       expiresAt,
@@ -727,7 +727,7 @@ export class AuthService {
     }
   }
 
-  async disable2fa(userId: number): Promise<{ message: string }> {
+  async disable2fa(userId: string): Promise<{ message: string }> {
     const user = await this.userRepository.findOne({
       where: { id: userId },
     });
@@ -738,7 +738,7 @@ export class AuthService {
 
     // Get security settings
     const securitySettings = await this.securitySettingsRepository.findOne({
-      where: { userId: user.id.toString() },
+      where: { userId: user.id },
     });
 
     if (!securitySettings || !securitySettings.twoFactorEnabled) {
@@ -750,14 +750,14 @@ export class AuthService {
 
     // Invalidate all existing 2FA OTPs for this user
     await this.twoFactorOtpRepository.update(
-      { userId: user.id.toString(), used: false },
+      { userId: user.id, used: false },
       { used: true },
     );
 
     return { message: 'Two-factor authentication disabled successfully' };
   }
 
-  async get2faStatus(userId: number): Promise<TwoFactorStatusResponseDto> {
+  async get2faStatus(userId: string): Promise<TwoFactorStatusResponseDto> {
     const user = await this.userRepository.findOne({
       where: { id: userId },
     });
@@ -768,7 +768,7 @@ export class AuthService {
 
     // Get security settings
     const securitySettings = await this.securitySettingsRepository.findOne({
-      where: { userId: user.id.toString() },
+      where: { userId: user.id },
     });
 
     return {
@@ -777,7 +777,7 @@ export class AuthService {
     };
   }
 
-  async testEmail(userId: number): Promise<{ success: boolean; message: string; error?: string }> {
+  async testEmail(userId: string): Promise<{ success: boolean; message: string; error?: string }> {
     const user = await this.userRepository.findOne({
       where: { id: userId },
     });
