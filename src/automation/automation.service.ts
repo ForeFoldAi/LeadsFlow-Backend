@@ -125,7 +125,12 @@ export class AutomationService {
 
                 if (schedule.channel === 'email') {
                     let template;
-                    if (schedule.templateId) {
+                    const multiIds = schedule.templateIds?.filter(Boolean);
+                    if (multiIds && multiIds.length > 0) {
+                        // Randomly pick one of the selected templates each run
+                        const randomId = multiIds[Math.floor(Math.random() * multiIds.length)];
+                        template = await this.templatesService.findOne(randomId, schedule.userId);
+                    } else if (schedule.templateId) {
                         template = await this.templatesService.findOne(schedule.templateId, schedule.userId);
                     } else if (lead.sector) {
                         const templates = await this.templatesService.findBySector('email', lead.sector, schedule.userId);

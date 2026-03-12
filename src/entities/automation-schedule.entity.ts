@@ -32,6 +32,9 @@ export class AutomationSchedule {
     @Column({ name: 'template_id', type: 'uuid', nullable: true })
     templateId?: string;
 
+    @Column({ name: 'template_ids', type: 'simple-array', nullable: true })
+    templateIds?: string[];
+
     @Column({ name: 'sms_message', type: 'text', nullable: true })
     smsMessage?: string;
 

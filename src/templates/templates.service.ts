@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { CommunicationTemplate } from '../entities/communication-template.entity';
 import { User } from '../entities/user.entity';
 import { UserPermissions } from '../entities/user-permissions.entity';
-import { CreateTemplateDto } from './dto/create-template.dto';
+import { CreateTemplateDto, BulkCreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 
 @Injectable()
@@ -18,14 +18,16 @@ export class TemplatesService {
         private readonly userPermissionsRepository: Repository<UserPermissions>,
     ) { }
 
-    async create(createTemplateDto: CreateTemplateDto, userId: string): Promise<CommunicationTemplate> {
-        // Fetch user and permissions for tagging
+    private async resolveAdminAndCompany(userId: string): Promise<{ adminId: string; companyName?: string }> {
         const user = await this.userRepository.findOne({ where: { id: userId } });
-        const permissions = await this.userPermissionsRepository.findOne({ where: { userId: userId } });
-
+        const permissions = await this.userPermissionsRepository.findOne({ where: { userId } });
         const adminId = permissions ? permissions.parentUserId : userId;
         const companyName = user ? user.companyName : undefined;
+        return { adminId, companyName };
+    }
 
+    async create(createTemplateDto: CreateTemplateDto, userId: string): Promise<CommunicationTemplate> {
+        const { adminId, companyName } = await this.resolveAdminAndCompany(userId);
         const template = this.templateRepository.create({
             ...createTemplateDto,
             userId,
@@ -35,15 +37,30 @@ export class TemplatesService {
         return await this.templateRepository.save(template);
     }
 
+    async bulkCreate(dto: BulkCreateTemplateDto, userId: string): Promise<CommunicationTemplate[]> {
+        const { adminId, companyName } = await this.resolveAdminAndCompany(userId);
+        const { sectors, ...rest } = dto;
+
+        const templates = sectors.map((sector) =>
+            this.templateRepository.create({
+                ...rest,
+                sector,
+                userId,
+                adminId,
+                companyName,
+            }),
+        );
+        return await this.templateRepository.save(templates);
+    }
+
     async findAll(userId: string): Promise<CommunicationTemplate[]> {
-        // Find templates where user is owner or they belong to the same company
         const user = await this.userRepository.findOne({ where: { id: userId } });
 
         if (user && user.companyName) {
             return await this.templateRepository.find({
                 where: [
                     { userId },
-                    { companyName: user.companyName }
+                    { companyName: user.companyName },
                 ],
                 order: { createdAt: 'DESC' },
             });
@@ -56,9 +73,27 @@ export class TemplatesService {
     }
 
     async findOne(id: string, userId: string): Promise<CommunicationTemplate> {
-        const template = await this.templateRepository.findOne({
-            where: { id, userId },
-        });
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+        const permissions = await this.userPermissionsRepository.findOne({ where: { userId } });
+        const adminId = permissions ? permissions.parentUserId : userId;
+
+        // Allow access if the template belongs to the user or to their company
+        let template: CommunicationTemplate | null = null;
+
+        if (user && user.companyName) {
+            template = await this.templateRepository.findOne({
+                where: [
+                    { id, userId },
+                    { id, adminId },
+                    { id, companyName: user.companyName },
+                ],
+            });
+        } else {
+            template = await this.templateRepository.findOne({
+                where: [{ id, userId }, { id, adminId }],
+            });
+        }
+
         if (!template) {
             throw new NotFoundException(`Template with ID ${id} not found`);
         }
@@ -77,6 +112,18 @@ export class TemplatesService {
     }
 
     async findBySector(type: string, sector: string, userId: string): Promise<CommunicationTemplate[]> {
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+
+        if (user && user.companyName) {
+            return await this.templateRepository.find({
+                where: [
+                    { type, sector, userId },
+                    { type, sector, companyName: user.companyName },
+                ],
+                order: { createdAt: 'DESC' },
+            });
+        }
+
         return await this.templateRepository.find({
             where: { type, sector, userId },
             order: { createdAt: 'DESC' },

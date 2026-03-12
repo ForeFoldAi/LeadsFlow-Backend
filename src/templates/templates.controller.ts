@@ -11,7 +11,7 @@ import {
     Query,
 } from '@nestjs/common';
 import { TemplatesService } from './templates.service';
-import { CreateTemplateDto } from './dto/create-template.dto';
+import { CreateTemplateDto, BulkCreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 import { TokenAuthGuard } from '../auth/guards/token-auth.guard';
 
@@ -23,6 +23,11 @@ export class TemplatesController {
     @Post()
     create(@Body() createTemplateDto: CreateTemplateDto, @Request() req) {
         return this.templatesService.create(createTemplateDto, req.user.id);
+    }
+
+    @Post('bulk')
+    bulkCreate(@Body() dto: BulkCreateTemplateDto, @Request() req) {
+        return this.templatesService.bulkCreate(dto, req.user.id);
     }
 
     @Get()

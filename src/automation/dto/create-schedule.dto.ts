@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsBoolean, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsBoolean, IsUUID, IsArray } from 'class-validator';
 
 export class CreateScheduleDto {
     @IsString()
@@ -26,6 +26,11 @@ export class CreateScheduleDto {
     @IsUUID()
     @IsOptional()
     templateId?: string;
+
+    @IsArray()
+    @IsUUID('all', { each: true })
+    @IsOptional()
+    templateIds?: string[];
 
     @IsString()
     @IsOptional()
