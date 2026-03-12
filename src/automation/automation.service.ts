@@ -170,10 +170,19 @@ export class AutomationService {
         return { processed, failed };
     }
 
-    private personalize(text: string, lead: any): string {
+    private personalize(text: string, lead: any, sender?: any): string {
         return text
             .replace(/\{\{name\}\}/g, lead.name || '')
-            .replace(/\{\{company\}\}/g, lead.companyName || 'your company');
+            .replace(/\{\{company\}\}/g, lead.companyName || '')
+            .replace(/\{\{email\}\}/g, lead.email || '')
+            .replace(/\{\{phone\}\}/g, lead.phoneNumber || '')
+            .replace(/\{\{city\}\}/g, lead.city || '')
+            .replace(/\{\{sender_name\}\}/g, sender?.fullName || '')
+            .replace(/\{\{sender_company\}\}/g, sender?.companyName || '')
+            .replace(/\{\{sender_email\}\}/g, sender?.email || '')
+            .replace(/\{\{sender_phone\}\}/g, sender?.phoneNumber || '')
+            .replace(/\{\{sender_website\}\}/g, sender?.website || '')
+            .replace(/\{\{sender_industry\}\}/g, sender?.industry || sender?.customIndustry || '');
     }
 
     private sleep(ms: number) {

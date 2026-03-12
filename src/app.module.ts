@@ -79,7 +79,9 @@ import { AutomationSchedule } from './entities/automation-schedule.entity';
             CommunicationLog,
             AutomationSchedule,
           ],
-          synchronize: false, // Disabled - database already exists
+          synchronize: false,
+          migrations: [__dirname + '/migrations/*.{ts,js}'],
+          migrationsRun: false,
           logging: process.env.NODE_ENV === 'development',
           // Only enable SSL if explicitly configured
           ...(enableSsl ? {

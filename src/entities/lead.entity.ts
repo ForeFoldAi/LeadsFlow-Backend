@@ -134,6 +134,9 @@ export class Lead {
   @Column({ name: 'custom_sector', type: 'varchar', length: 255, nullable: true })
   customSector?: string;
 
+  @Column({ name: 'assigned_to_user_id', type: 'varchar', length: 255, nullable: true })
+  assignedToUserId?: string; // Sub-user who owns this lead (null = admin owns it)
+
   @Column({ name: 'user_id', type: 'varchar', length: 255 })
   userId: string; // Foreign key to User.id
 

@@ -38,9 +38,13 @@ export class LeadsService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    // Sub-user resolves to parent userId so all company leads are included
+    const permissions = await this.userPermissionsRepository.findOne({ where: { userId } });
+    const effectiveUserId = permissions ? permissions.parentUserId : userId;
+
     return await this.leadRepository
       .createQueryBuilder('lead')
-      .where('lead.userId = :userId', { userId })
+      .where('lead.userId = :userId', { userId: effectiveUserId })
       .andWhere('lead.nextFollowupDate IS NOT NULL')
       .andWhere('lead.nextFollowupDate <= :today', { today })
       .orderBy('lead.nextFollowupDate', 'ASC')
@@ -292,6 +296,7 @@ export class LeadsService {
 
     // If sub-user, use parent user's ID for lead ownership
     let effectiveUserId = userId;
+    let assignedToUserId: string | undefined = undefined;
     if (userPermissions) {
       // Get parent user to use their ID
       const parentUser = await this.userRepository.findOne({
@@ -301,6 +306,7 @@ export class LeadsService {
         throw new NotFoundException(`Parent user (ID: ${userPermissions.parentUserId}) not found. Please contact your administrator.`);
       }
       effectiveUserId = parentUser.id;
+      assignedToUserId = userId; // Track which sub-user owns this lead
     }
     // Convert date strings to Date objects
     const leadData: Partial<Lead> = {
@@ -337,6 +343,7 @@ export class LeadsService {
       sector: createLeadDto.sector,
       customSector: createLeadDto.customSector,
       userId: effectiveUserId, // Use effective user ID (parent if sub-user)
+      assignedToUserId, // Sub-user who created/owns this lead (undefined for admin)
     };
 
     // If sector is provided, save it to custom_sectors table (if it's not already there)

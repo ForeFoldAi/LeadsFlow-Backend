@@ -9,6 +9,12 @@ import {
 } from 'typeorm';
 import { User } from './user.entity';
 
+export enum TemplateCategory {
+  GENERAL = 'general',
+  FOCUSED_TEMPLATE = 'focused_template',
+  FOLLOWUP_TEMPLATE = 'followup_template',
+}
+
 @Entity('communication_templates')
 export class CommunicationTemplate {
   @PrimaryGeneratedColumn('uuid')
@@ -28,6 +34,13 @@ export class CommunicationTemplate {
 
   @Column({ type: 'varchar', length: 50, nullable: true })
   sector?: string;
+
+  @Column({
+    type: 'enum',
+    enum: TemplateCategory,
+    default: TemplateCategory.GENERAL,
+  })
+  category: TemplateCategory;
 
   @Column({ name: 'admin_id', type: 'varchar', length: 255, nullable: true })
   adminId?: string;
