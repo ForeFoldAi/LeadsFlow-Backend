@@ -64,9 +64,20 @@ export class AutomationService {
     }
 
     async findOne(id: string, userId: string): Promise<AutomationSchedule> {
-        const schedule = await this.scheduleRepository.findOne({
-            where: { id, userId },
-        });
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+
+        let schedule: AutomationSchedule | null = null;
+        if (user?.companyName) {
+            schedule = await this.scheduleRepository.findOne({
+                where: [
+                    { id, userId },
+                    { id, companyName: user.companyName },
+                ],
+            });
+        } else {
+            schedule = await this.scheduleRepository.findOne({ where: { id, userId } });
+        }
+
         if (!schedule) {
             throw new NotFoundException(`Schedule with ID ${id} not found`);
         }
@@ -124,7 +135,7 @@ export class AutomationService {
                 let subject = '';
 
                 if (schedule.channel === 'email') {
-                    let template;
+                    let template: import('../entities/communication-template.entity').CommunicationTemplate | null = null;
                     const multiIds = schedule.templateIds?.filter(Boolean);
                     if (multiIds && multiIds.length > 0) {
                         // Randomly pick one of the selected templates each run
