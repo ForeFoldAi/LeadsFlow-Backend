@@ -36,18 +36,24 @@ export class LeadsService {
 
   async findLeadsDueForFollowUp(userId: string): Promise<Lead[]> {
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    today.setHours(23, 59, 59, 999);
 
     // Sub-user resolves to parent userId so all company leads are included
     const permissions = await this.userPermissionsRepository.findOne({ where: { userId } });
     const effectiveUserId = permissions ? permissions.parentUserId : userId;
 
+    // Include leads with status 'new' or 'followup':
+    //   - nextFollowupDate is NULL  → always eligible (no date set)
+    //   - nextFollowupDate is set   → only if due today or overdue
     return await this.leadRepository
       .createQueryBuilder('lead')
       .where('lead.userId = :userId', { userId: effectiveUserId })
-      .andWhere('lead.nextFollowupDate IS NOT NULL')
-      .andWhere('lead.nextFollowupDate <= :today', { today })
-      .orderBy('lead.nextFollowupDate', 'ASC')
+      .andWhere('lead.leadStatus IN (:...statuses)', { statuses: ['new', 'followup'] })
+      .andWhere(
+        '(lead.nextFollowupDate IS NULL OR lead.nextFollowupDate <= :today)',
+        { today },
+      )
+      .orderBy('lead.nextFollowupDate', 'ASC', 'NULLS LAST')
       .getMany();
   }
 

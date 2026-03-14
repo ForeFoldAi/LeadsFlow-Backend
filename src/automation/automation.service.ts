@@ -116,17 +116,35 @@ export class AutomationService {
         const ownerLabelBase = owner?.fullName?.trim() || owner?.email || 'Automation';
         const ownerLabel = `${ownerLabelBase} (auto)`;
 
-        // 1. Get leads based on targetFilter
+        // Pre-load selected templates (if any) so we know which sectors they cover.
+        // This prevents sending the "defence" template to non-defence leads.
+        type CommunicationTemplate = import('../entities/communication-template.entity').CommunicationTemplate;
+        let pinnedTemplates: CommunicationTemplate[] = [];
+        const multiIds = schedule.templateIds?.filter(Boolean) ?? [];
+        if (multiIds.length > 0) {
+            pinnedTemplates = await Promise.all(
+                multiIds.map((id) => this.templatesService.findOne(id, schedule.userId))
+            );
+        } else if (schedule.templateId) {
+            const t = await this.templatesService.findOne(schedule.templateId, schedule.userId);
+            pinnedTemplates = [t];
+        }
+
+        // Sectors covered by the pinned templates (lower-cased for comparison).
+        // Empty means "no restriction" — auto-pick by lead sector.
+        const pinnedSectors = pinnedTemplates.map((t) => (t.sector ?? '').toLowerCase());
+
+        // Get all eligible leads
         const leads = await this.leadsService.findLeadsDueForFollowUp(schedule.userId);
 
         for (const lead of leads) {
-            // Check if contact info exists for the chosen channel
+            // Check contact info for the chosen channel
             if (schedule.channel === 'email' && !lead.email) {
-                this.logger.warn(`Skipping lead ${lead.id} for schedule ${schedule.id} - no email address`);
+                this.logger.warn(`Skipping lead ${lead.id} - no email`);
                 continue;
             }
             if ((schedule.channel === 'sms' || schedule.channel === 'whatsapp') && !lead.phoneNumber) {
-                this.logger.warn(`Skipping lead ${lead.id} for schedule ${schedule.id} - no phone number`);
+                this.logger.warn(`Skipping lead ${lead.id} - no phone`);
                 continue;
             }
 
@@ -135,24 +153,34 @@ export class AutomationService {
                 let subject = '';
 
                 if (schedule.channel === 'email') {
-                    let template: import('../entities/communication-template.entity').CommunicationTemplate | null = null;
-                    const multiIds = schedule.templateIds?.filter(Boolean);
-                    if (multiIds && multiIds.length > 0) {
-                        // Randomly pick one of the selected templates each run
-                        const randomId = multiIds[Math.floor(Math.random() * multiIds.length)];
-                        template = await this.templatesService.findOne(randomId, schedule.userId);
-                    } else if (schedule.templateId) {
-                        template = await this.templatesService.findOne(schedule.templateId, schedule.userId);
+                    let template: CommunicationTemplate | null = null;
+
+                    if (pinnedTemplates.length > 0) {
+                        // Only send to leads whose sector matches one of the pinned templates
+                        const leadSector = (lead.sector ?? '').toLowerCase();
+                        const match = pinnedTemplates.find(
+                            (t) => (t.sector ?? '').toLowerCase() === leadSector,
+                        );
+                        if (!match) {
+                            // Lead's sector not covered by this schedule — skip silently
+                            continue;
+                        }
+                        // If multiple templates match the lead's sector, pick one randomly
+                        const sectorMatches = pinnedTemplates.filter(
+                            (t) => (t.sector ?? '').toLowerCase() === leadSector,
+                        );
+                        template = sectorMatches[Math.floor(Math.random() * sectorMatches.length)];
                     } else if (lead.sector) {
+                        // No templates pinned — auto-pick by lead's sector
                         const templates = await this.templatesService.findBySector('email', lead.sector, schedule.userId);
-                        template = templates[0];
+                        template = templates[0] ?? null;
                     }
 
                     if (template) {
                         subject = this.personalize(template.subject || '', lead);
                         content = this.personalize(template.body, lead);
                     } else {
-                        this.logger.warn(`No template found for lead ${lead.id} in schedule ${schedule.id}`);
+                        this.logger.warn(`No template for lead ${lead.id} sector "${lead.sector}" in schedule ${schedule.id}`);
                         continue;
                     }
                 } else if (schedule.channel === 'sms') {
@@ -171,10 +199,7 @@ export class AutomationService {
                     }, schedule.userId);
                     processed++;
 
-                    // Mark last contacted by as automation for this user
                     await this.leadsService.setLastContactedByFromAutomation(lead.id, ownerLabel);
-
-                    // Add 2 second delay between successful messages to prevent spam/rate limits
                     await this.sleep(2000);
                 }
             } catch (error) {
