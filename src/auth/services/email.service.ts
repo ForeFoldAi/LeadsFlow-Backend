@@ -190,6 +190,38 @@ export class EmailService {
   /** Transient SMTP errors that may succeed on retry (ECONNRESET, ETIMEDOUT, etc.) */
   private static readonly RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'ESOCKET', 'EPIPE', 'ENOTFOUND']);
 
+  /**
+   * Gmail (and many email clients) strip data: URIs from HTML for security.
+   * This method replaces every <img src="data:..."> with a CID reference and
+   * returns the matching nodemailer attachment objects so images are sent as
+   * proper inline attachments instead.
+   */
+  private extractInlineImages(html: string): {
+    html: string;
+    attachments: nodemailer.SendMailOptions['attachments'];
+  } {
+    const attachments: nodemailer.SendMailOptions['attachments'] = [];
+    let index = 0;
+
+    const processedHtml = html.replace(
+      /src="(data:(image\/[a-zA-Z+]+);base64,([^"]+))"/g,
+      (_match, _full, mimeType, base64Data) => {
+        const cid = `inline-image-${index++}@leadsflow`;
+        attachments.push({
+          cid,
+          filename: `image${index}.${mimeType.split('/')[1] || 'png'}`,
+          content: base64Data,
+          encoding: 'base64',
+          contentType: mimeType,
+          contentDisposition: 'inline',
+        });
+        return `src="cid:${cid}"`;
+      },
+    );
+
+    return { html: processedHtml, attachments };
+  }
+
   private async sendMailWithTransporter(
     transporter: nodemailer.Transporter,
     from: string | undefined,
@@ -201,12 +233,15 @@ export class EmailService {
     const maxRetries = 3;
     const retryDelayMs = 2000;
 
+    const { html: processedHtml, attachments } = this.extractInlineImages(html);
+
     const mailOptions = {
       from: from,
       to: to,
       subject: subject,
-      html: html,
+      html: processedHtml,
       text: text || '',
+      attachments,
     };
 
     let lastError: Error | null = null;
