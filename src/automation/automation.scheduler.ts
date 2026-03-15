@@ -15,18 +15,31 @@ export class AutomationScheduler {
         private readonly automationService: AutomationService,
     ) { }
 
-    @Cron('* * * * *') // Run every minute so any HH:MM schedule can fire on time
+    @Cron('* * * * *', { timeZone: 'Asia/Kolkata' }) // Run every minute so any HH:MM schedule can fire on time
     async handleCron() {
         const now = new Date();
-        const currentHourMinute = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-        this.logger.debug(`Scheduler tick at ${currentHourMinute}`);
+
+        // Always evaluate time in Asia/Kolkata so schedule times match what the user configured
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            weekday: 'short',
+            hour12: false,
+        }).formatToParts(now);
+
+        const getVal = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+        const currentHourMinute = `${getVal('hour').padStart(2, '0')}:${getVal('minute').padStart(2, '0')}`;
+        const currentWeekday = getVal('weekday').toLowerCase().slice(0, 3); // 'sun', 'mon', …
+
+        this.logger.debug(`Scheduler tick at ${currentHourMinute} IST (${currentWeekday})`);
 
         const activeSchedules = await this.scheduleRepository.find({
             where: { isActive: true },
         });
 
         for (const schedule of activeSchedules) {
-            if (this.isScheduledToRun(schedule, now, currentHourMinute)) {
+            if (this.isScheduledToRun(schedule, currentHourMinute, currentWeekday)) {
                 this.logger.log(`Executing scheduled automation: ${schedule.name}`);
                 try {
                     await this.automationService.processSchedule(schedule);
@@ -38,27 +51,23 @@ export class AutomationScheduler {
         }
     }
 
-    private isScheduledToRun(schedule: AutomationSchedule, now: Date, currentHourMinute: string): boolean {
-        // Exact minute match (cron now runs every minute so this is precise)
+    private isScheduledToRun(schedule: AutomationSchedule, currentHourMinute: string, currentWeekday: string): boolean {
+        // Exact minute match in IST
         if (schedule.time !== currentHourMinute) {
             return false;
         }
-
-        // Day abbreviations — accept any casing from the user
-        const DAY_ABBR = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-        const currentDayAbbr = DAY_ABBR[now.getDay()]; // e.g. "sat"
 
         if (schedule.frequency === 'daily') {
             return true;
         } else if (schedule.frequency === 'weekly') {
             // weekly fires every Monday by default
-            return now.getDay() === 1;
+            return currentWeekday === 'mon';
         } else if (schedule.frequency === 'custom' && schedule.days) {
             // Normalise user input: "Sat, Sun" / "sat,sun" / "SAT" all work
             const userDays = schedule.days
                 .split(',')
                 .map((d) => d.trim().toLowerCase().slice(0, 3));
-            return userDays.includes(currentDayAbbr);
+            return userDays.includes(currentWeekday);
         }
 
         return false;
