@@ -130,9 +130,12 @@ export class AutomationService {
             pinnedTemplates = [t];
         }
 
-        // Sectors covered by the pinned templates (lower-cased for comparison).
+        // Sectors covered by the pinned templates (multi-sector templates have t.sectors; else use t.sector).
         // Empty means "no restriction" — auto-pick by lead sector.
-        const pinnedSectors = pinnedTemplates.map((t) => (t.sector ?? '').toLowerCase());
+        const pinnedSectorSets = pinnedTemplates.map((t) => {
+            const list = t.sectors?.length ? t.sectors : (t.sector ? [t.sector] : []);
+            return list.map((s) => (s ?? '').toLowerCase());
+        });
 
         // Get all eligible leads
         const leads = await this.leadsService.findLeadsDueForFollowUp(schedule.userId);
@@ -156,18 +159,18 @@ export class AutomationService {
                     let template: CommunicationTemplate | null = null;
 
                     if (pinnedTemplates.length > 0) {
-                        // Only send to leads whose sector matches one of the pinned templates
+                        // Only send to leads whose sector matches one of the pinned templates (sector or sectors array)
                         const leadSector = (lead.sector ?? '').toLowerCase();
-                        const match = pinnedTemplates.find(
-                            (t) => (t.sector ?? '').toLowerCase() === leadSector,
+                        const match = pinnedTemplates.find((t, i) =>
+                            pinnedSectorSets[i].includes(leadSector),
                         );
                         if (!match) {
                             // Lead's sector not covered by this schedule — skip silently
                             continue;
                         }
                         // If multiple templates match the lead's sector, pick one randomly
-                        const sectorMatches = pinnedTemplates.filter(
-                            (t) => (t.sector ?? '').toLowerCase() === leadSector,
+                        const sectorMatches = pinnedTemplates.filter((t, i) =>
+                            pinnedSectorSets[i].includes(leadSector),
                         );
                         template = sectorMatches[Math.floor(Math.random() * sectorMatches.length)];
                     } else if (lead.sector) {

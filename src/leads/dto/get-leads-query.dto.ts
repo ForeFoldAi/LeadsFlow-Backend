@@ -24,12 +24,30 @@ export class GetLeadsQueryDto {
   category?: string;
 
   @IsOptional()
-  @IsString()
-  city?: string;
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      return value.includes(',') ? value.split(',').map((s) => s.trim()) : [value];
+    }
+    if (Array.isArray(value)) {
+      return value.flatMap((v) => (typeof v === 'string' && v.includes(',') ? v.split(',').map((s) => s.trim()) : v));
+    }
+    return value;
+  })
+  @IsArray()
+  city?: string[];
 
   @IsOptional()
-  @IsString()
-  sector?: string;
+  @Transform(({ value }) => {
+    if (typeof value === 'string') {
+      return value.includes(',') ? value.split(',').map((s) => s.trim()) : [value];
+    }
+    if (Array.isArray(value)) {
+      return value.flatMap((v) => (typeof v === 'string' && v.includes(',') ? v.split(',').map((s) => s.trim()) : v));
+    }
+    return value;
+  })
+  @IsArray()
+  sector?: string[];
 
   @IsOptional()
   @IsString()

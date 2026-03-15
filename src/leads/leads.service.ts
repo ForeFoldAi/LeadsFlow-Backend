@@ -145,15 +145,15 @@ export class LeadsService {
         });
       }
 
-      if (query.city) {
-        queryBuilder = queryBuilder.andWhere('LOWER(lead.city) LIKE LOWER(:city)', {
-          city: `%${query.city}%`,
+      if (query.city && query.city.length > 0) {
+        queryBuilder = queryBuilder.andWhere('LOWER(lead.city) IN (:...cities)', {
+          cities: query.city.map((c) => c.toLowerCase()),
         });
       }
 
-      if (query.sector) {
-        queryBuilder = queryBuilder.andWhere('LOWER(lead.sector) LIKE LOWER(:sector)', {
-          sector: `%${query.sector}%`,
+      if (query.sector && query.sector.length > 0) {
+        queryBuilder = queryBuilder.andWhere('LOWER(lead.sector) IN (:...sectors)', {
+          sectors: query.sector.map((s) => s.toLowerCase()),
         });
       }
 

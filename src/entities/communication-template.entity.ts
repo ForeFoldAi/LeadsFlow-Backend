@@ -35,6 +35,10 @@ export class CommunicationTemplate {
   @Column({ type: 'varchar', length: 50, nullable: true })
   sector?: string;
 
+  /** When set, this template applies to all listed sectors (single template for multiple sectors). */
+  @Column({ type: 'jsonb', nullable: true })
+  sectors?: string[];
+
   @Column({
     type: 'enum',
     enum: TemplateCategory,

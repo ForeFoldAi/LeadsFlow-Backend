@@ -23,6 +23,11 @@ export class CreateTemplateDto {
     @IsOptional()
     sector?: string;
 
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    sectors?: string[];
+
     @IsEnum(TemplateCategory)
     @IsOptional()
     category?: TemplateCategory;
