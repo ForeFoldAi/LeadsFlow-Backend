@@ -5,7 +5,10 @@ import {
     Logger,
     NotFoundException,
     HttpException,
+    OnModuleInit,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { LessThan } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CommunicationLog } from '../entities/communication-log.entity';
@@ -17,7 +20,7 @@ import { SendMessageDto } from './dto/send-message.dto';
 import Twilio from 'twilio';
 
 @Injectable()
-export class CommunicationService {
+export class CommunicationService implements OnModuleInit {
     private readonly logger = new Logger(CommunicationService.name);
     private readonly twilioClient: ReturnType<typeof Twilio>;
     private readonly twilioPhone: string;
@@ -225,5 +228,19 @@ export class CommunicationService {
             order: { sentAt: 'DESC' },
         });
         return logs.map((l) => this.sanitizeLog(l));
+    }
+
+    async onModuleInit(): Promise<void> {
+        await this.purgeOldLogs();
+    }
+
+    @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+    async purgeOldLogs(): Promise<void> {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - 7);
+        const result = await this.logRepository.delete({
+            sentAt: LessThan(cutoff),
+        });
+        this.logger.log(`Purged ${result.affected ?? 0} communication log(s) older than 7 days`);
     }
 }
