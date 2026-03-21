@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AutomationSchedule } from '../entities/automation-schedule.entity';
@@ -55,6 +55,16 @@ export class AutomationScheduler {
         // Exact minute match in IST
         if (schedule.time !== currentHourMinute) {
             return false;
+        }
+
+        // Guard against double-firing (e.g. two backend instances or a restart overlap).
+        // If the schedule already ran within the last 2 minutes, skip it.
+        if (schedule.lastRunAt) {
+            const msSinceLastRun = Date.now() - new Date(schedule.lastRunAt).getTime();
+            if (msSinceLastRun < 2 * 60 * 1000) {
+                this.logger.warn(`Skipping schedule "${schedule.name}" — already ran ${Math.round(msSinceLastRun / 1000)}s ago`);
+                return false;
+            }
         }
 
         if (schedule.frequency === 'daily') {
