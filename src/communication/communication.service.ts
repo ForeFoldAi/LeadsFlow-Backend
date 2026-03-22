@@ -8,7 +8,7 @@ import {
     OnModuleInit,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { LessThan } from 'typeorm';
+import { LessThan, MoreThan } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CommunicationLog } from '../entities/communication-log.entity';
@@ -24,6 +24,7 @@ export class CommunicationService implements OnModuleInit {
     private readonly logger = new Logger(CommunicationService.name);
     private readonly twilioClient: ReturnType<typeof Twilio>;
     private readonly twilioPhone: string;
+    private readonly inFlightEmailDedupe = new Map<string, number>();
 
     constructor(
         @InjectRepository(CommunicationLog)
@@ -71,6 +72,62 @@ export class CommunicationService implements OnModuleInit {
 
         const companyName = user ? user.companyName : undefined;
 
+        // Strong duplicate guard for scheduled emails:
+        // 1) in-memory in-flight lock (prevents near-simultaneous duplicate sends)
+        // 2) DB recent sent-log check (prevents repeated sends in short window)
+        let emailDedupeKey: string | null = null;
+        if (type === 'email') {
+            const normalizedSubject = (subject || '').trim();
+            const normalizedContent = (content || '').trim();
+            emailDedupeKey = `${leadId}::${normalizedSubject}::${normalizedContent}`;
+
+            const lockWindowMs = 2 * 60 * 1000; // 2 minutes
+            const nowMs = Date.now();
+            const lockUntil = this.inFlightEmailDedupe.get(emailDedupeKey);
+            if (lockUntil && lockUntil > nowMs) {
+                this.logger.warn(`Skipping duplicate in-flight email for lead ${leadId}`);
+                throw new BadRequestException('Duplicate email send skipped');
+            }
+            this.inFlightEmailDedupe.set(emailDedupeKey, nowMs + lockWindowMs);
+
+            const dedupeWindowMs = 15 * 60 * 1000; // 15 minutes
+            const sentAfter = new Date(nowMs - dedupeWindowMs);
+            const recentEmailLogs = await this.logRepository.find({
+                where: {
+                    leadId,
+                    type: 'email',
+                    status: 'sent',
+                    sentAt: MoreThan(sentAfter),
+                },
+                order: { sentAt: 'DESC' },
+                take: 10,
+            });
+
+            const normalizedIncoming = this.normalizeMessageForDedupe(normalizedContent);
+            const existing = recentEmailLogs.find((log) => {
+                const sameSubject = (log.subject || '').trim() === normalizedSubject;
+                const sameContent = this.normalizeMessageForDedupe(log.content || '') === normalizedIncoming;
+                const sentDiffMs = Math.abs(nowMs - new Date(log.sentAt).getTime());
+
+                // Hard guard: prevent very-close repeat sends to same lead even if tiny
+                // content formatting differences slipped in.
+                const veryRecentMs = 3 * 60 * 1000; // 3 minutes
+                if (sentDiffMs <= veryRecentMs && sameSubject) {
+                    return true;
+                }
+
+                return sameSubject && sameContent;
+            });
+
+            if (existing) {
+                this.logger.warn(
+                    `Skipping duplicate email for lead ${leadId}; same message already sent at ${existing.sentAt.toISOString()}`,
+                );
+                this.inFlightEmailDedupe.delete(emailDedupeKey);
+                throw new BadRequestException('Duplicate email send skipped');
+            }
+        }
+
         let status: 'sent' | 'failed' = 'sent';
         let errorMessage: string | null = null;
         let failureException: HttpException | null = null;
@@ -79,9 +136,11 @@ export class CommunicationService implements OnModuleInit {
                 if (!lead.email) {
                     throw new BadRequestException('Lead has no email address');
                 }
+                const recipientEmail = this.extractPrimaryEmail(lead.email);
                 const emailSubject = subject || 'Message from LeadsFlow';
                 const htmlContent = this.formatEmailContent(content, lead, emailSubject, user ?? undefined);
-                await this.emailService.sendActionCenterMail(lead.email, emailSubject, htmlContent);
+                await this.emailService.sendActionCenterMail(recipientEmail, emailSubject, htmlContent);
+                this.logger.log(`Sent email to normalized recipient ${recipientEmail} for lead ${leadId}`);
             } else if (type === 'sms' || type === 'whatsapp') {
                 if (!lead.phoneNumber) {
                     throw new BadRequestException('Lead has no phone number');
@@ -100,6 +159,9 @@ export class CommunicationService implements OnModuleInit {
                 throw new BadRequestException(`Unsupported message type: ${type}`);
             }
         } catch (error) {
+            if (emailDedupeKey) {
+                this.inFlightEmailDedupe.delete(emailDedupeKey);
+            }
             if (error instanceof HttpException) {
                 failureException = error;
             }
@@ -131,6 +193,10 @@ export class CommunicationService implements OnModuleInit {
             });
         }
 
+        if (emailDedupeKey) {
+            this.inFlightEmailDedupe.delete(emailDedupeKey);
+        }
+
         // Return log with relations
         const finalLog = await this.logRepository.findOne({
             where: { id: savedLog.id },
@@ -155,12 +221,39 @@ export class CommunicationService implements OnModuleInit {
         return this.sanitizeLog(finalLog);
     }
 
+    private normalizeMessageForDedupe(value: string): string {
+        return (value || '')
+            .replace(/&nbsp;/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
     private normalizePhone(phone: string): string {
         // Strip all non-digit characters except leading +
         const stripped = phone.replace(/[^\d+]/g, '');
         if (stripped.startsWith('+')) return stripped;
         // Prepend + — phone numbers should be stored with country code (e.g. 916300407229)
         return `+${stripped}`;
+    }
+
+    private extractPrimaryEmail(rawEmail: string): string {
+        // Some imported leads can contain multiple addresses in one field
+        // (comma/semicolon separated). To avoid accidental multi-send for one lead,
+        // always send to a single normalized recipient.
+        const candidates = String(rawEmail)
+            .split(/[;,]/g)
+            .map((v) => v.trim())
+            .filter(Boolean);
+        const primary = candidates[0] || rawEmail.trim();
+        const basicEmailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!basicEmailPattern.test(primary)) {
+            throw new BadRequestException('Lead has an invalid email address');
+        }
+        if (candidates.length > 1) {
+            this.logger.warn(`Lead email has multiple recipients; using only primary "${primary}"`);
+        }
+        return primary.toLowerCase();
     }
 
     private applyVariables(content: string, lead: Lead, sender?: User): string {

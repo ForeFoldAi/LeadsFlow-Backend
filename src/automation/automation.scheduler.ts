@@ -32,21 +32,49 @@ export class AutomationScheduler {
         const currentHourMinute = `${getVal('hour').padStart(2, '0')}:${getVal('minute').padStart(2, '0')}`;
         const currentWeekday = getVal('weekday').toLowerCase().slice(0, 3); // 'sun', 'mon', …
 
-        this.logger.debug(`Scheduler tick at ${currentHourMinute} IST (${currentWeekday})`);
+        this.logger.debug(`[AUTOMATION_TICK] time=${currentHourMinute} weekday=${currentWeekday} tz=Asia/Kolkata`);
 
         const activeSchedules = await this.scheduleRepository.find({
             where: { isActive: true },
         });
+        this.logger.log(`[AUTOMATION_SCAN] activeSchedules=${activeSchedules.length} at=${currentHourMinute}(${currentWeekday})`);
+
+        const threshold = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes ago
 
         for (const schedule of activeSchedules) {
-            if (this.isScheduledToRun(schedule, currentHourMinute, currentWeekday)) {
-                this.logger.log(`Executing scheduled automation: ${schedule.name}`);
-                try {
-                    await this.automationService.processSchedule(schedule);
-                    await this.scheduleRepository.update(schedule.id, { lastRunAt: new Date() });
-                } catch (err) {
-                    this.logger.error(`Failed to run schedule ${schedule.id}: ${err.message}`);
-                }
+            if (!this.isScheduledToRun(schedule, currentHourMinute, currentWeekday)) {
+                continue;
+            }
+            this.logger.log(
+                `[SCHEDULE_MATCH] id=${schedule.id} name="${schedule.name}" userId=${schedule.userId} ` +
+                `channel=${schedule.channel} frequency=${schedule.frequency} time=${schedule.time}`,
+            );
+
+            // Atomically claim the schedule by updating lastRunAt only if it hasn't
+            // been claimed yet. This prevents two backend instances from both running
+            // the same schedule simultaneously (race condition).
+            const claim = await this.scheduleRepository
+                .createQueryBuilder()
+                .update(AutomationSchedule)
+                .set({ lastRunAt: new Date() })
+                .where('id = :id', { id: schedule.id })
+                .andWhere('(last_run_at IS NULL OR last_run_at < :threshold)', { threshold })
+                .execute();
+
+            if (!claim.affected || claim.affected === 0) {
+                this.logger.warn(`[SCHEDULE_CLAIM_SKIPPED] id=${schedule.id} name="${schedule.name}" reason=already-claimed-recently`);
+                continue;
+            }
+
+            this.logger.log(`[SCHEDULE_EXECUTE_START] id=${schedule.id} name="${schedule.name}"`);
+            try {
+                const result = await this.automationService.processSchedule(schedule);
+                this.logger.log(
+                    `[SCHEDULE_EXECUTE_DONE] id=${schedule.id} name="${schedule.name}" ` +
+                    `processed=${result.processed} failed=${result.failed}`,
+                );
+            } catch (err) {
+                this.logger.error(`[SCHEDULE_EXECUTE_ERROR] id=${schedule.id} name="${schedule.name}" error=${err.message}`);
             }
         }
     }
@@ -55,16 +83,6 @@ export class AutomationScheduler {
         // Exact minute match in IST
         if (schedule.time !== currentHourMinute) {
             return false;
-        }
-
-        // Guard against double-firing (e.g. two backend instances or a restart overlap).
-        // If the schedule already ran within the last 2 minutes, skip it.
-        if (schedule.lastRunAt) {
-            const msSinceLastRun = Date.now() - new Date(schedule.lastRunAt).getTime();
-            if (msSinceLastRun < 2 * 60 * 1000) {
-                this.logger.warn(`Skipping schedule "${schedule.name}" — already ran ${Math.round(msSinceLastRun / 1000)}s ago`);
-                return false;
-            }
         }
 
         if (schedule.frequency === 'daily') {

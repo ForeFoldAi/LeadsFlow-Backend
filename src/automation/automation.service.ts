@@ -1,9 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Like, MoreThan, Repository } from 'typeorm';
 import { AutomationSchedule } from '../entities/automation-schedule.entity';
 import { User } from '../entities/user.entity';
 import { UserPermissions } from '../entities/user-permissions.entity';
+import { CommunicationLog } from '../entities/communication-log.entity';
 import { CreateScheduleDto } from './dto/create-schedule.dto';
 import { UpdateScheduleDto } from './dto/update-schedule.dto';
 import { CommunicationService } from '../communication/communication.service';
@@ -13,6 +14,7 @@ import { TemplatesService } from '../templates/templates.service';
 @Injectable()
 export class AutomationService {
     private readonly logger = new Logger(AutomationService.name);
+    private readonly inFlightScheduleLeadDay = new Set<string>();
 
     constructor(
         @InjectRepository(AutomationSchedule)
@@ -21,6 +23,8 @@ export class AutomationService {
         private readonly userRepository: Repository<User>,
         @InjectRepository(UserPermissions)
         private readonly userPermissionsRepository: Repository<UserPermissions>,
+        @InjectRepository(CommunicationLog)
+        private readonly communicationLogRepository: Repository<CommunicationLog>,
         private readonly communicationService: CommunicationService,
         private readonly leadsService: LeadsService,
         private readonly templatesService: TemplatesService,
@@ -33,6 +37,22 @@ export class AutomationService {
 
         const adminId = permissions ? permissions.parentUserId : userId;
         const companyName = user ? user.companyName : undefined;
+
+        // Prevent accidental duplicate schedules from rapid UI clicks.
+        const existing = await this.scheduleRepository.findOne({
+            where: {
+                userId,
+                channel: createScheduleDto.channel,
+                frequency: createScheduleDto.frequency,
+                time: createScheduleDto.time,
+                days: createScheduleDto.days ?? null as any,
+                targetFilter: createScheduleDto.targetFilter ?? 'due_followup',
+                isActive: true,
+            },
+        });
+        if (existing) {
+            throw new BadRequestException('A similar active schedule already exists for this time.');
+        }
 
         const schedule = this.scheduleRepository.create({
             ...createScheduleDto,
@@ -96,21 +116,46 @@ export class AutomationService {
     }
 
     async runSchedule(id: string, userId: string): Promise<{ processed: number; failed: number }> {
-        const schedule = await this.findOne(id, userId);
-        this.logger.log(`Manually running schedule: ${schedule.name}`);
+        // Restrict Run Now to schedule owner only to avoid same-company users
+        // re-running each other's schedules and causing duplicate sends.
+        const schedule = await this.scheduleRepository.findOne({ where: { id, userId } });
+        if (!schedule) {
+            throw new NotFoundException(`Schedule with ID ${id} not found`);
+        }
+        this.logger.log(`[RUN_NOW_START] scheduleId=${schedule.id} name="${schedule.name}" userId=${userId}`);
+
+        // Atomically claim the run — prevents duplicate sends if the cron fires at the
+        // same moment or if the user clicks "Run Now" twice in quick succession.
+        const threshold = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes ago
+        const claim = await this.scheduleRepository
+            .createQueryBuilder()
+            .update(AutomationSchedule)
+            .set({ lastRunAt: new Date() })
+            .where('id = :id', { id })
+            .andWhere('(last_run_at IS NULL OR last_run_at < :threshold)', { threshold })
+            .execute();
+
+        if (!claim.affected || claim.affected === 0) {
+            this.logger.warn(`[RUN_NOW_SKIPPED] scheduleId=${schedule.id} reason=already-ran-recently`);
+            return { processed: 0, failed: 0 };
+        }
 
         const result = await this.processSchedule(schedule);
-
-        await this.scheduleRepository.update(id, {
-            lastRunAt: new Date(),
-        });
-
+        this.logger.log(
+            `[RUN_NOW_DONE] scheduleId=${schedule.id} processed=${result.processed} failed=${result.failed}`,
+        );
         return result;
     }
 
     async processSchedule(schedule: AutomationSchedule): Promise<{ processed: number; failed: number }> {
         let processed = 0;
         let failed = 0;
+        let skippedNoEmail = 0;
+        let skippedNoPhone = 0;
+        let skippedAlreadySentForScheduleToday = 0;
+        let skippedNoTemplate = 0;
+        let skippedSectorMismatch = 0;
+        let skippedRecentDuplicate = 0;
 
         const owner = await this.userRepository.findOne({ where: { id: schedule.userId } });
         const ownerLabelBase = owner?.fullName?.trim() || owner?.email || 'Automation';
@@ -137,21 +182,63 @@ export class AutomationService {
             return list.map((s) => (s ?? '').toLowerCase());
         });
 
+        // IST date key used for "once per schedule per day" idempotency.
+        const istDateParts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        }).formatToParts(new Date());
+        const getDatePart = (type: string) => istDateParts.find((p) => p.type === type)?.value ?? '';
+        const runDateKey = `${getDatePart('year')}-${getDatePart('month')}-${getDatePart('day')}`; // YYYY-MM-DD
+
         // Get all eligible leads
         const leads = await this.leadsService.findLeadsDueForFollowUp(schedule.userId);
+        this.logger.log(
+            `[AUTOMATION_PROCESS_START] scheduleId=${schedule.id} name="${schedule.name}" userId=${schedule.userId} ` +
+            `channel=${schedule.channel} eligibleLeads=${leads.length}`,
+        );
 
         for (const lead of leads) {
             // Check contact info for the chosen channel
             if (schedule.channel === 'email' && !lead.email) {
-                this.logger.warn(`Skipping lead ${lead.id} - no email`);
+                skippedNoEmail++;
+                this.logger.warn(`[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} reason=no-email`);
                 continue;
             }
             if ((schedule.channel === 'sms' || schedule.channel === 'whatsapp') && !lead.phoneNumber) {
-                this.logger.warn(`Skipping lead ${lead.id} - no phone`);
+                skippedNoPhone++;
+                this.logger.warn(`[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} reason=no-phone`);
                 continue;
             }
 
             try {
+                // Per-schedule per-day rule (email):
+                // same schedule should not send to same lead more than once in the same IST day,
+                // but it should send again on the next scheduled day.
+                if (schedule.channel === 'email') {
+                    const scheduleMarker = `<!-- automation-schedule:${schedule.id}:date:${runDateKey} -->`;
+                    const alreadySentForSchedule = await this.communicationLogRepository.findOne({
+                        where: {
+                            leadId: lead.id,
+                            userId: schedule.userId,
+                            type: 'email',
+                            status: 'sent',
+                            content: Like(`%${scheduleMarker}%`),
+                        },
+                        order: { sentAt: 'DESC' },
+                    });
+
+                    if (alreadySentForSchedule) {
+                        skippedAlreadySentForScheduleToday++;
+                        this.logger.warn(
+                            `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} userId=${schedule.userId} ` +
+                            `reason=schedule-already-sent-today runDate=${runDateKey} sentAt=${alreadySentForSchedule.sentAt.toISOString()}`,
+                        );
+                        continue;
+                    }
+                }
+
                 let content = '';
                 let subject = '';
 
@@ -161,15 +248,19 @@ export class AutomationService {
                     if (pinnedTemplates.length > 0) {
                         // Only send to leads whose sector matches one of the pinned templates (sector or sectors array)
                         const leadSector = (lead.sector ?? '').toLowerCase();
-                        const match = pinnedTemplates.find((t, i) =>
+                        const match = pinnedTemplates.find((_t, i) =>
                             pinnedSectorSets[i].includes(leadSector),
                         );
                         if (!match) {
                             // Lead's sector not covered by this schedule — skip silently
+                            skippedSectorMismatch++;
+                            this.logger.debug(
+                                `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} reason=sector-mismatch leadSector="${leadSector}"`,
+                            );
                             continue;
                         }
                         // If multiple templates match the lead's sector, pick one randomly
-                        const sectorMatches = pinnedTemplates.filter((t, i) =>
+                        const sectorMatches = pinnedTemplates.filter((_t, i) =>
                             pinnedSectorSets[i].includes(leadSector),
                         );
                         template = sectorMatches[Math.floor(Math.random() * sectorMatches.length)];
@@ -182,8 +273,15 @@ export class AutomationService {
                     if (template) {
                         subject = this.personalize(template.subject || '', lead);
                         content = this.personalize(template.body, lead);
+                        // Persist schedule identity inside log content (HTML comment)
+                        // so we can enforce "one send per schedule per lead" without schema changes.
+                        content = `${content}\n<!-- automation-schedule:${schedule.id}:date:${runDateKey} -->`;
                     } else {
-                        this.logger.warn(`No template for lead ${lead.id} sector "${lead.sector}" in schedule ${schedule.id}`);
+                        skippedNoTemplate++;
+                        this.logger.warn(
+                            `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} ` +
+                            `reason=no-template leadSector="${lead.sector ?? ''}"`,
+                        );
                         continue;
                     }
                 } else if (schedule.channel === 'sms') {
@@ -193,6 +291,45 @@ export class AutomationService {
                 }
 
                 if (content) {
+                    const inFlightKey = `${schedule.id}:${lead.id}:${schedule.channel}:${runDateKey}`;
+                    if (this.inFlightScheduleLeadDay.has(inFlightKey)) {
+                        skippedRecentDuplicate++;
+                        this.logger.warn(
+                            `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} reason=in-flight-duplicate`,
+                        );
+                        continue;
+                    }
+                    this.inFlightScheduleLeadDay.add(inFlightKey);
+
+                    // Idempotency guard:
+                    // Skip if an identical message for this lead/channel was already sent
+                    // in the recent window. This prevents duplicate deliveries when the same
+                    // schedule is triggered multiple times or overlapping schedules exist.
+                    const dedupeWindowMs = 10 * 60 * 1000; // 10 minutes
+                    const sentAfter = new Date(Date.now() - dedupeWindowMs);
+                    const dedupeWhere: any = {
+                        leadId: lead.id,
+                        type: schedule.channel,
+                        status: 'sent',
+                        content,
+                        sentAt: MoreThan(sentAfter),
+                    };
+                    if (schedule.channel === 'email') {
+                        dedupeWhere.subject = subject;
+                    }
+                    const existing = await this.communicationLogRepository.findOne({
+                        where: dedupeWhere,
+                        order: { sentAt: 'DESC' },
+                    });
+                    if (existing) {
+                        skippedRecentDuplicate++;
+                        this.logger.warn(
+                            `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} ` +
+                            `reason=recent-duplicate channel=${schedule.channel} sentAt=${existing.sentAt.toISOString()}`,
+                        );
+                        continue;
+                    }
+
                     await this.communicationService.sendMessage({
                         leadId: lead.id,
                         type: schedule.channel,
@@ -201,15 +338,31 @@ export class AutomationService {
                         templateId: schedule.templateId,
                     }, schedule.userId);
                     processed++;
+                    this.logger.log(
+                        `[AUTOMATION_SENT] scheduleId=${schedule.id} leadId=${lead.id} channel=${schedule.channel}`,
+                    );
 
                     await this.leadsService.setLastContactedByFromAutomation(lead.id, ownerLabel);
                     await this.sleep(2000);
+                    this.inFlightScheduleLeadDay.delete(inFlightKey);
                 }
             } catch (error) {
-                this.logger.error(`Error processing lead ${lead.id} for schedule ${schedule.id}: ${error.message}`);
+                const inFlightKey = `${schedule.id}:${lead.id}:${schedule.channel}:${runDateKey}`;
+                this.inFlightScheduleLeadDay.delete(inFlightKey);
+                this.logger.error(
+                    `[AUTOMATION_ERROR] scheduleId=${schedule.id} leadId=${lead.id} channel=${schedule.channel} error=${error.message}`,
+                );
                 failed++;
             }
         }
+
+        this.logger.log(
+            `[AUTOMATION_PROCESS_DONE] scheduleId=${schedule.id} name="${schedule.name}" ` +
+            `processed=${processed} failed=${failed} ` +
+            `skippedNoEmail=${skippedNoEmail} skippedNoPhone=${skippedNoPhone} ` +
+            `skippedAlreadySentForScheduleToday=${skippedAlreadySentForScheduleToday} skippedNoTemplate=${skippedNoTemplate} ` +
+            `skippedSectorMismatch=${skippedSectorMismatch} skippedRecentDuplicate=${skippedRecentDuplicate}`,
+        );
 
         return { processed, failed };
     }
