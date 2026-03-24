@@ -106,6 +106,39 @@ export class AutomationService {
 
     async update(id: string, updateScheduleDto: UpdateScheduleDto, userId: string): Promise<AutomationSchedule> {
         const schedule = await this.findOne(id, userId);
+
+        // If the time (or other schedule-defining fields) is changing, check that no OTHER
+        // active schedule already occupies the same slot. This prevents two schedules from
+        // silently running at the same time and sending duplicate emails.
+        const incomingTime = updateScheduleDto.time ?? schedule.time;
+        const incomingChannel = updateScheduleDto.channel ?? schedule.channel;
+        const incomingFrequency = updateScheduleDto.frequency ?? schedule.frequency;
+        const incomingDays = 'days' in updateScheduleDto ? (updateScheduleDto.days ?? null) : (schedule.days ?? null);
+        const incomingTargetFilter = updateScheduleDto.targetFilter ?? schedule.targetFilter ?? 'due_followup';
+
+        const conflict = await this.scheduleRepository.findOne({
+            where: {
+                userId,
+                channel: incomingChannel,
+                frequency: incomingFrequency,
+                time: incomingTime,
+                days: incomingDays as any,
+                targetFilter: incomingTargetFilter,
+                isActive: true,
+            },
+        });
+        if (conflict && conflict.id !== id) {
+            throw new BadRequestException('Another active schedule already exists for this time slot.');
+        }
+
+        // When the scheduled time changes, reset lastRunAt so the new time is treated as
+        // a fresh schedule. Without this, if lastRunAt happens to fall within the 2-minute
+        // claim window relative to the new time, the first cron tick could be incorrectly
+        // skipped or double-claimed.
+        if (updateScheduleDto.time && updateScheduleDto.time !== schedule.time) {
+            schedule.lastRunAt = undefined;
+        }
+
         Object.assign(schedule, updateScheduleDto);
         return await this.scheduleRepository.save(schedule);
     }
@@ -225,6 +258,7 @@ export class AutomationService {
                             type: 'email',
                             status: 'sent',
                             content: Like(`%${scheduleMarker}%`),
+                            sentAt: MoreThan(schedule.updatedAt),
                         },
                         order: { sentAt: 'DESC' },
                     });
