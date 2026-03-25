@@ -160,27 +160,25 @@ export class AutomationService {
         // Atomically claim the run — prevents duplicate sends if the cron fires at the
         // same moment or if the user clicks "Run Now" twice in quick succession.
         const threshold = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes ago
-        const claim = await this.scheduleRepository
-            .createQueryBuilder()
-            .update(AutomationSchedule)
-            .set({ lastRunAt: new Date() })
-            .where('id = :id', { id })
-            .andWhere('(last_run_at IS NULL OR last_run_at < :threshold)', { threshold })
-            .execute();
+        const claim = await this.scheduleRepository.query(
+            `UPDATE automation_schedules SET last_run_at = NOW()
+             WHERE id = $1 AND (last_run_at IS NULL OR last_run_at < $2)`,
+            [id, threshold],
+        );
 
-        if (!claim.affected || claim.affected === 0) {
+        if (!claim[1] || claim[1] === 0) {
             this.logger.warn(`[RUN_NOW_SKIPPED] scheduleId=${schedule.id} reason=already-ran-recently`);
             return { processed: 0, failed: 0 };
         }
 
-        const result = await this.processSchedule(schedule);
+        const result = await this.processSchedule(schedule, true);
         this.logger.log(
             `[RUN_NOW_DONE] scheduleId=${schedule.id} processed=${result.processed} failed=${result.failed}`,
         );
         return result;
     }
 
-    async processSchedule(schedule: AutomationSchedule): Promise<{ processed: number; failed: number }> {
+    async processSchedule(schedule: AutomationSchedule, isManualRun = false): Promise<{ processed: number; failed: number }> {
         let processed = 0;
         let failed = 0;
         let skippedNoEmail = 0;
@@ -251,25 +249,28 @@ export class AutomationService {
                 // but it should send again on the next scheduled day.
                 if (schedule.channel === 'email') {
                     const scheduleMarker = `<!-- automation-schedule:${schedule.id}:date:${runDateKey} -->`;
-                    const alreadySentForSchedule = await this.communicationLogRepository.findOne({
-                        where: {
-                            leadId: lead.id,
-                            userId: schedule.userId,
-                            type: 'email',
-                            status: 'sent',
-                            content: Like(`%${scheduleMarker}%`),
-                            sentAt: MoreThan(schedule.updatedAt),
-                        },
-                        order: { sentAt: 'DESC' },
-                    });
+                    // Skip the daily-limit check for manual Run Now — it is independent of the scheduler.
+                    if (!isManualRun) {
+                        const alreadySentForSchedule = await this.communicationLogRepository.findOne({
+                            where: {
+                                leadId: lead.id,
+                                userId: schedule.userId,
+                                type: 'email',
+                                status: 'sent',
+                                content: Like(`%${scheduleMarker}%`),
+                                sentAt: MoreThan(schedule.updatedAt),
+                            },
+                            order: { sentAt: 'DESC' },
+                        });
 
-                    if (alreadySentForSchedule) {
-                        skippedAlreadySentForScheduleToday++;
-                        this.logger.warn(
-                            `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} userId=${schedule.userId} ` +
-                            `reason=schedule-already-sent-today runDate=${runDateKey} sentAt=${alreadySentForSchedule.sentAt.toISOString()}`,
-                        );
-                        continue;
+                        if (alreadySentForSchedule) {
+                            skippedAlreadySentForScheduleToday++;
+                            this.logger.warn(
+                                `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} userId=${schedule.userId} ` +
+                                `reason=schedule-already-sent-today runDate=${runDateKey} sentAt=${alreadySentForSchedule.sentAt.toISOString()}`,
+                            );
+                            continue;
+                        }
                     }
                 }
 

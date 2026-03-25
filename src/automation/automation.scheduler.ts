@@ -53,15 +53,13 @@ export class AutomationScheduler {
             // Atomically claim the schedule by updating lastRunAt only if it hasn't
             // been claimed yet. This prevents two backend instances from both running
             // the same schedule simultaneously (race condition).
-            const claim = await this.scheduleRepository
-                .createQueryBuilder()
-                .update(AutomationSchedule)
-                .set({ lastRunAt: new Date() })
-                .where('id = :id', { id: schedule.id })
-                .andWhere('(last_run_at IS NULL OR last_run_at < :threshold)', { threshold })
-                .execute();
+            const claim = await this.scheduleRepository.query(
+                `UPDATE automation_schedules SET last_run_at = NOW()
+                 WHERE id = $1 AND (last_run_at IS NULL OR last_run_at < $2)`,
+                [schedule.id, threshold],
+            );
 
-            if (!claim.affected || claim.affected === 0) {
+            if (!claim[1] || claim[1] === 0) {
                 this.logger.warn(`[SCHEDULE_CLAIM_SKIPPED] id=${schedule.id} name="${schedule.name}" reason=already-claimed-recently`);
                 continue;
             }

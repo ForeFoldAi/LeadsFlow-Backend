@@ -223,6 +223,7 @@ export class CommunicationService implements OnModuleInit {
 
     private normalizeMessageForDedupe(value: string): string {
         return (value || '')
+            .replace(/<!--[\s\S]*?-->/g, '')  // strip HTML comments (incl. automation markers)
             .replace(/&nbsp;/gi, ' ')
             .replace(/\s+/g, ' ')
             .trim()
