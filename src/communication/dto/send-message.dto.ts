@@ -21,4 +21,7 @@ export class SendMessageDto {
     @IsUUID()
     @IsOptional()
     templateId?: string;
+
+    @IsOptional()
+    scheduleUpdatedAt?: Date;
 }

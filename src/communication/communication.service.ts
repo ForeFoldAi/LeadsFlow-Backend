@@ -45,7 +45,7 @@ export class CommunicationService implements OnModuleInit {
     }
 
     async sendMessage(sendMessageDto: SendMessageDto, userId: string): Promise<CommunicationLog> {
-        const { leadId, type, subject, content } = sendMessageDto;
+        const { leadId, type, subject, content, scheduleUpdatedAt } = sendMessageDto;
 
         this.logger.log(`Attempting to send ${type} to lead ${leadId} by user ${userId}`);
         const lead = await this.leadRepository.findOne({ where: { id: leadId } });
@@ -91,7 +91,8 @@ export class CommunicationService implements OnModuleInit {
             this.inFlightEmailDedupe.set(emailDedupeKey, nowMs + lockWindowMs);
 
             const dedupeWindowMs = 15 * 60 * 1000; // 15 minutes
-            const sentAfter = new Date(nowMs - dedupeWindowMs);
+            const fifteenMinAgo = new Date(nowMs - dedupeWindowMs);
+            const sentAfter = scheduleUpdatedAt && scheduleUpdatedAt > fifteenMinAgo ? scheduleUpdatedAt : fifteenMinAgo;
             const recentEmailLogs = await this.logRepository.find({
                 where: {
                     leadId,

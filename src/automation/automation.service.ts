@@ -374,6 +374,7 @@ export class AutomationService {
                         subject,
                         content,
                         templateId: schedule.templateId,
+                        scheduleUpdatedAt: schedule.updatedAt,
                     }, schedule.userId);
                     processed++;
                     this.logger.log(
