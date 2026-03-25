@@ -235,13 +235,11 @@ export class AutomationService {
             if (schedule.channel === 'email' && !lead.email) {
                 skippedNoEmail++;
                 this.logger.warn(`[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} reason=no-email`);
-                await this.saveSkippedLog(lead, schedule, 'No email address on file', owner);
                 continue;
             }
             if ((schedule.channel === 'sms' || schedule.channel === 'whatsapp') && !lead.phoneNumber) {
                 skippedNoPhone++;
                 this.logger.warn(`[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} reason=no-phone`);
-                await this.saveSkippedLog(lead, schedule, 'No phone number on file', owner);
                 continue;
             }
 
@@ -271,7 +269,6 @@ export class AutomationService {
                                 `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} userId=${schedule.userId} ` +
                                 `reason=schedule-already-sent-today runDate=${runDateKey} sentAt=${alreadySentForSchedule.sentAt.toISOString()}`,
                             );
-                            await this.saveSkippedLog(lead, schedule, 'Already sent today', owner);
                             continue;
                         }
                     }
