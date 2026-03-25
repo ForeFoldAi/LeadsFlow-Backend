@@ -235,11 +235,13 @@ export class AutomationService {
             if (schedule.channel === 'email' && !lead.email) {
                 skippedNoEmail++;
                 this.logger.warn(`[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} reason=no-email`);
+                await this.saveSkippedLog(lead, schedule, 'No email address on file', owner);
                 continue;
             }
             if ((schedule.channel === 'sms' || schedule.channel === 'whatsapp') && !lead.phoneNumber) {
                 skippedNoPhone++;
                 this.logger.warn(`[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} reason=no-phone`);
+                await this.saveSkippedLog(lead, schedule, 'No phone number on file', owner);
                 continue;
             }
 
@@ -269,6 +271,7 @@ export class AutomationService {
                                 `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} userId=${schedule.userId} ` +
                                 `reason=schedule-already-sent-today runDate=${runDateKey} sentAt=${alreadySentForSchedule.sentAt.toISOString()}`,
                             );
+                            await this.saveSkippedLog(lead, schedule, 'Already sent today', owner);
                             continue;
                         }
                     }
@@ -306,8 +309,8 @@ export class AutomationService {
                     }
 
                     if (template) {
-                        subject = this.personalize(template.subject || '', lead);
-                        content = this.personalize(template.body, lead);
+                        subject = this.personalize(template.subject || '', lead, owner);
+                        content = this.personalize(template.body, lead, owner);
                         // Persist schedule identity inside log content (HTML comment)
                         // so we can enforce "one send per schedule per lead" without schema changes.
                         content = `${content}\n<!-- automation-schedule:${schedule.id}:date:${runDateKey} -->`;
@@ -317,12 +320,13 @@ export class AutomationService {
                             `[AUTOMATION_SKIP] scheduleId=${schedule.id} leadId=${lead.id} ` +
                             `reason=no-template leadSector="${lead.sector ?? ''}"`,
                         );
+                        await this.saveSkippedLog(lead, schedule, `No template for sector: ${lead.sector || 'unknown'}`, owner);
                         continue;
                     }
                 } else if (schedule.channel === 'sms') {
-                    content = this.personalize(schedule.smsMessage || '', lead);
+                    content = this.personalize(schedule.smsMessage || '', lead, owner);
                 } else if (schedule.channel === 'whatsapp') {
-                    content = this.personalize(schedule.whatsappMessage || '', lead);
+                    content = this.personalize(schedule.whatsappMessage || '', lead, owner);
                 }
 
                 if (content) {
@@ -391,6 +395,7 @@ export class AutomationService {
                 this.logger.error(
                     `[AUTOMATION_ERROR] scheduleId=${schedule.id} leadId=${lead.id} channel=${schedule.channel} error=${error.message}`,
                 );
+                await this.saveSkippedLog(lead, schedule, error.message || 'Send failed', owner);
                 failed++;
             }
         }
@@ -404,6 +409,29 @@ export class AutomationService {
         );
 
         return { processed, failed };
+    }
+
+    private async saveSkippedLog(
+        lead: any,
+        schedule: AutomationSchedule,
+        reason: string,
+        owner: any,
+    ): Promise<void> {
+        try {
+            const log = this.communicationLogRepository.create({
+                leadId: lead.id,
+                userId: schedule.userId,
+                adminId: schedule.userId,
+                type: schedule.channel,
+                content: '',
+                status: 'skipped',
+                errorMessage: reason,
+                companyName: owner?.companyName || undefined,
+            });
+            await this.communicationLogRepository.save(log);
+        } catch (_) {
+            // Never let a log-save failure break the main flow
+        }
     }
 
     private personalize(text: string, lead: any, sender?: any): string {
