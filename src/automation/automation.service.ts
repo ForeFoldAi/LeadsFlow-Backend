@@ -340,8 +340,11 @@ export class AutomationService {
                     // Skip if an identical message for this lead/channel was already sent
                     // in the recent window. This prevents duplicate deliveries when the same
                     // schedule is triggered multiple times or overlapping schedules exist.
+                    // Use the later of (now - 10min) or schedule.updatedAt so that editing
+                    // the schedule time resets the dedupe window.
                     const dedupeWindowMs = 10 * 60 * 1000; // 10 minutes
-                    const sentAfter = new Date(Date.now() - dedupeWindowMs);
+                    const tenMinAgo = new Date(Date.now() - dedupeWindowMs);
+                    const sentAfter = schedule.updatedAt > tenMinAgo ? schedule.updatedAt : tenMinAgo;
                     const dedupeWhere: any = {
                         leadId: lead.id,
                         type: schedule.channel,
