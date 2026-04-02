@@ -86,8 +86,11 @@ export class AutomationScheduler {
         if (schedule.frequency === 'daily') {
             return true;
         } else if (schedule.frequency === 'weekly') {
-            // weekly fires every Monday by default
-            return currentWeekday === 'mon';
+            // Use the configured day if set, otherwise fall back to Monday
+            const weeklyDay = schedule.days
+                ? schedule.days.trim().toLowerCase().slice(0, 3)
+                : 'mon';
+            return currentWeekday === weeklyDay;
         } else if (schedule.frequency === 'custom' && schedule.days) {
             // Normalise user input: "Sat, Sun" / "sat,sun" / "SAT" all work
             const userDays = schedule.days
