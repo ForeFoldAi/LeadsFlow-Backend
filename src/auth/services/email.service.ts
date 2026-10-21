@@ -2,6 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 
+export interface EmailAttachment {
+  url: string;
+  filename: string;
+  contentType: string;
+}
+
 @Injectable()
 export class EmailService {
   private transporter: nodemailer.Transporter;
@@ -229,11 +235,16 @@ export class EmailService {
     subject: string,
     html: string,
     text?: string,
+    extraAttachments?: EmailAttachment[],
   ): Promise<void> {
     const maxRetries = 3;
     const retryDelayMs = 2000;
 
-    const { html: processedHtml, attachments } = this.extractInlineImages(html);
+    const { html: processedHtml, attachments: inlineAttachments } = this.extractInlineImages(html);
+    const attachments = [
+      ...(inlineAttachments || []),
+      ...(extraAttachments || []).map((a) => ({ filename: a.filename, path: a.url, contentType: a.contentType })),
+    ];
 
     const mailOptions = {
       from: from,
@@ -278,14 +289,20 @@ export class EmailService {
     await this.sendMailWithTransporter(this.transporter, from, to, subject, html, text);
   }
 
-  async sendActionCenterMail(to: string, subject: string, html: string, text?: string): Promise<void> {
+  async sendActionCenterMail(
+    to: string,
+    subject: string,
+    html: string,
+    text?: string,
+    attachments?: EmailAttachment[],
+  ): Promise<void> {
     const transporter = this.actionCenterTransporter || this.transporter;
     const from =
       this.configService.get<string>('ACTION_CENTER_SMTP_FROM') ||
       this.configService.get<string>('ACTION_CENTER_SMTP_USER') ||
       this.configService.get<string>('SMTP_FROM') ||
       this.configService.get<string>('SMTP_USER');
-    await this.sendMailWithTransporter(transporter, from, to, subject, html, text);
+    await this.sendMailWithTransporter(transporter, from, to, subject, html, text, attachments);
   }
 
   async sendPasswordResetOtp(email: string, otp: string): Promise<void> {

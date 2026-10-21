@@ -13,6 +13,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { TemplatesModule } from './templates/templates.module';
 import { CommunicationModule } from './communication/communication.module';
 import { AutomationModule } from './automation/automation.module';
+import { MediaModule } from './media/media.module';
 import { User } from './entities/user.entity';
 import { Token } from './entities/token.entity';
 import { Lead } from './entities/lead.entity';
@@ -101,6 +102,7 @@ import { AutomationSchedule } from './entities/automation-schedule.entity';
     TemplatesModule,
     CommunicationModule,
     AutomationModule,
+    MediaModule,
   ],
   controllers: [AppController],
   providers: [AppService],

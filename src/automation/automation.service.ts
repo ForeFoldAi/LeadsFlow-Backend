@@ -195,6 +195,7 @@ export class AutomationService {
         // Pre-load selected templates (if any) so we know which sectors they cover.
         // This prevents sending the "defence" template to non-defence leads.
         type CommunicationTemplate = import('../entities/communication-template.entity').CommunicationTemplate;
+        type TemplateAttachment = import('../entities/communication-template.entity').TemplateAttachment;
         let pinnedTemplates: CommunicationTemplate[] = [];
         const multiIds = schedule.templateIds?.filter(Boolean) ?? [];
         if (multiIds.length > 0) {
@@ -276,6 +277,7 @@ export class AutomationService {
 
                 let content = '';
                 let subject = '';
+                let attachments: TemplateAttachment[] | undefined;
 
                 if (schedule.channel === 'email') {
                     let template: CommunicationTemplate | null = null;
@@ -308,6 +310,7 @@ export class AutomationService {
                     if (template) {
                         subject = this.personalize(template.subject || '', lead, owner);
                         content = this.personalize(template.body, lead, owner);
+                        attachments = template.attachments ?? undefined;
                         // Persist schedule identity inside log content (HTML comment)
                         // so we can enforce "one send per schedule per lead" without schema changes.
                         content = `${content}\n<!-- automation-schedule:${schedule.id}:date:${runDateKey} -->`;
@@ -376,6 +379,7 @@ export class AutomationService {
                         content,
                         templateId: schedule.templateId,
                         scheduleUpdatedAt: schedule.updatedAt,
+                        attachments,
                     }, schedule.userId);
                     processed++;
                     this.logger.log(

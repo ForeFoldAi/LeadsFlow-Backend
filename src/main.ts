@@ -25,6 +25,7 @@ function getLocalIPAddress(): string {
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.useBodyParser('json', { limit: '10mb' });
   // Allow NestJS to catch SIGTERM/SIGINT so cron schedulers stop cleanly
   // before the process exits (prevents duplicate cron fires during redeploys).
   app.enableShutdownHooks();

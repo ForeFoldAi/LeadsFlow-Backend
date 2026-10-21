@@ -1,5 +1,7 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsArray, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { TemplateCategory } from '../../entities/communication-template.entity';
+import { AttachmentDto } from '../../communication/dto/attachment.dto';
 
 export class CreateTemplateDto {
     @IsString()
@@ -31,6 +33,12 @@ export class CreateTemplateDto {
     @IsEnum(TemplateCategory)
     @IsOptional()
     category?: TemplateCategory;
+
+    @IsOptional()
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => AttachmentDto)
+    attachments?: AttachmentDto[];
 }
 
 export class BulkCreateTemplateDto {
@@ -58,4 +66,10 @@ export class BulkCreateTemplateDto {
     @IsEnum(TemplateCategory)
     @IsOptional()
     category?: TemplateCategory;
+
+    @IsOptional()
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => AttachmentDto)
+    attachments?: AttachmentDto[];
 }
