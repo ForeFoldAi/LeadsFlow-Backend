@@ -45,7 +45,7 @@ export class CommunicationService implements OnModuleInit {
     }
 
     async sendMessage(sendMessageDto: SendMessageDto, userId: string): Promise<CommunicationLog> {
-        const { leadId, type, subject, content, scheduleUpdatedAt } = sendMessageDto;
+        const { leadId, type, subject, content, scheduleUpdatedAt, attachments } = sendMessageDto;
 
         this.logger.log(`Attempting to send ${type} to lead ${leadId} by user ${userId}`);
         const lead = await this.leadRepository.findOne({ where: { id: leadId } });
@@ -140,7 +140,7 @@ export class CommunicationService implements OnModuleInit {
                 const recipientEmail = this.extractPrimaryEmail(lead.email);
                 const emailSubject = subject || 'Message from LeadsFlow';
                 const htmlContent = this.formatEmailContent(content, lead, emailSubject, user ?? undefined);
-                await this.emailService.sendActionCenterMail(recipientEmail, emailSubject, htmlContent);
+                await this.emailService.sendActionCenterMail(recipientEmail, emailSubject, htmlContent, undefined, attachments);
                 this.logger.log(`Sent email to normalized recipient ${recipientEmail} for lead ${leadId}`);
             } else if (type === 'sms' || type === 'whatsapp') {
                 if (!lead.phoneNumber) {

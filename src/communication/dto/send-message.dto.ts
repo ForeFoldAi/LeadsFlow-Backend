@@ -1,4 +1,6 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID, IsArray, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+import { AttachmentDto } from './attachment.dto';
 
 export class SendMessageDto {
     @IsUUID()
@@ -24,4 +26,10 @@ export class SendMessageDto {
 
     @IsOptional()
     scheduleUpdatedAt?: Date;
+
+    @IsOptional()
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => AttachmentDto)
+    attachments?: AttachmentDto[];
 }

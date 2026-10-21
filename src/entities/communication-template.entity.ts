@@ -15,6 +15,12 @@ export enum TemplateCategory {
   FOLLOWUP_TEMPLATE = 'followup_template',
 }
 
+export interface TemplateAttachment {
+  url: string;
+  filename: string;
+  contentType: string;
+}
+
 @Entity('communication_templates')
 export class CommunicationTemplate {
   @PrimaryGeneratedColumn('uuid')
@@ -38,6 +44,10 @@ export class CommunicationTemplate {
   /** When set, this template applies to all listed sectors (single template for multiple sectors). */
   @Column({ type: 'jsonb', nullable: true })
   sectors?: string[];
+
+  /** Files sent as real email attachments whenever this template is used. */
+  @Column({ type: 'jsonb', nullable: true })
+  attachments?: TemplateAttachment[] | null;
 
   @Column({
     type: 'enum',
