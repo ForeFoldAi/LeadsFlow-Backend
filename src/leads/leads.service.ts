@@ -564,7 +564,7 @@ export class LeadsService {
     leads: CreateLeadDto[],
     userId: string,
   ): Promise<ImportLeadsResponseDto> {
-    // Check if user is a sub-user
+    // Resolve permissions and effective org owner
     const userPermissions = await this.userPermissionsRepository.findOne({
       where: { userId: userId.toString() },
     });
@@ -573,10 +573,8 @@ export class LeadsService {
       throw new ForbiddenException('You do not have permission to import leads');
     }
 
-    // If sub-user, use parent user's ID for lead ownership
     let effectiveUserId = userId;
     if (userPermissions) {
-      // Get parent user to use their ID
       const parentUser = await this.userRepository.findOne({
         where: { id: userPermissions.parentUserId },
       });
@@ -585,61 +583,101 @@ export class LeadsService {
       }
       effectiveUserId = parentUser.id;
     }
+
+    // ── Batch deduplication: one query for all existing emails + phones in this org ──
+    const incomingEmails  = leads.map(l => l.email?.toLowerCase().trim()).filter(Boolean) as string[];
+    const incomingPhones  = leads.map(l => l.phoneNumber?.trim()).filter(Boolean) as string[];
+
+    const existingLeads = await this.leadRepository.find({
+      where: [
+        ...(incomingEmails.length  ? [{ userId: effectiveUserId, email:       In(incomingEmails)  }] : []),
+        ...(incomingPhones.length  ? [{ userId: effectiveUserId, phoneNumber: In(incomingPhones)  }] : []),
+      ] as FindOptionsWhere<Lead>[],
+      select: ['email', 'phoneNumber'],
+    });
+
+    const existingEmailSet = new Set(existingLeads.map(l => l.email?.toLowerCase().trim()).filter(Boolean));
+    const existingPhoneSet = new Set(existingLeads.map(l => l.phoneNumber?.trim()).filter(Boolean));
+
+    // Also track identifiers seen within this batch to catch intra-file duplicates
+    const batchEmailSet = new Set<string>();
+    const batchPhoneSet = new Set<string>();
+
     const results: ImportLeadResult[] = [];
-    let successful = 0;
-    let failed = 0;
+    let successful  = 0;
+    let failed      = 0;
+    let duplicates  = 0;
 
     for (let i = 0; i < leads.length; i++) {
-      const leadDto = leads[i];
+      const leadDto   = leads[i];
       const rowNumber = i + 1;
+      const email     = leadDto.email?.toLowerCase().trim() || '';
+      const phone     = leadDto.phoneNumber?.trim()         || '';
+
+      // ── Duplicate check (org-scoped + intra-batch) ────────────────────────
+      if (email && existingEmailSet.has(email)) {
+        results.push({ success: false, duplicate: true, duplicateReason: 'email', rowNumber });
+        duplicates++;
+        continue;
+      }
+      if (phone && existingPhoneSet.has(phone)) {
+        results.push({ success: false, duplicate: true, duplicateReason: 'phone', rowNumber });
+        duplicates++;
+        continue;
+      }
+      if (email && batchEmailSet.has(email)) {
+        results.push({ success: false, duplicate: true, duplicateReason: 'email_in_batch', rowNumber });
+        duplicates++;
+        continue;
+      }
+      if (phone && batchPhoneSet.has(phone)) {
+        results.push({ success: false, duplicate: true, duplicateReason: 'phone_in_batch', rowNumber });
+        duplicates++;
+        continue;
+      }
+
+      // Mark identifiers as seen in this batch
+      if (email) batchEmailSet.add(email);
+      if (phone) batchPhoneSet.add(phone);
 
       try {
-        // Create lead using the same logic as create method
         const leadData: Partial<Lead> = {
-          name: leadDto.name,
-          phoneNumber: leadDto.phoneNumber,
-          email: leadDto.email,
-          dateOfBirth: leadDto.dateOfBirth
-            ? new Date(leadDto.dateOfBirth)
-            : undefined,
-          city: leadDto.city,
-          state: leadDto.state,
-          country: leadDto.country,
-          pincode: leadDto.pincode,
-          companyName: leadDto.companyName,
-          designation: leadDto.designation,
-          customerCategory: leadDto.customerCategory || CustomerCategory.POTENTIAL,
-          lastContactedDate: leadDto.lastContactedDate
-            ? new Date(leadDto.lastContactedDate)
-            : undefined,
-          lastContactedBy: leadDto.lastContactedBy,
-          nextFollowupDate: leadDto.nextFollowupDate
-            ? new Date(leadDto.nextFollowupDate)
-            : undefined,
-          customerInterestedIn: leadDto.customerInterestedIn,
+          name:                       leadDto.name,
+          phoneNumber:                leadDto.phoneNumber,
+          email:                      leadDto.email,
+          dateOfBirth:                leadDto.dateOfBirth ? new Date(leadDto.dateOfBirth) : undefined,
+          city:                       leadDto.city,
+          state:                      leadDto.state,
+          country:                    leadDto.country,
+          pincode:                    leadDto.pincode,
+          companyName:                leadDto.companyName,
+          designation:                leadDto.designation,
+          customerCategory:           leadDto.customerCategory || CustomerCategory.POTENTIAL,
+          lastContactedDate:          leadDto.lastContactedDate ? new Date(leadDto.lastContactedDate) : undefined,
+          lastContactedBy:            leadDto.lastContactedBy,
+          nextFollowupDate:           leadDto.nextFollowupDate ? new Date(leadDto.nextFollowupDate) : undefined,
+          customerInterestedIn:       leadDto.customerInterestedIn,
           preferredCommunicationChannel: leadDto.preferredCommunicationChannel,
           customCommunicationChannel: leadDto.customCommunicationChannel,
-          leadSource: leadDto.leadSource || LeadSource.WEBSITE,
-          customLeadSource: leadDto.customLeadSource,
-          customReferralSource: leadDto.customReferralSource,
-          customGeneratedBy: leadDto.customGeneratedBy,
-          leadStatus: leadDto.leadStatus || LeadStatus.NEW,
-          leadCreatedBy: leadDto.leadCreatedBy,
-          additionalNotes: leadDto.additionalNotes,
-          sector: leadDto.sector,
-          customSector: leadDto.customSector,
-          userId: effectiveUserId, // Use effective user ID (parent if sub-user)
+          leadSource:                 leadDto.leadSource || LeadSource.WEBSITE,
+          customLeadSource:           leadDto.customLeadSource,
+          customReferralSource:       leadDto.customReferralSource,
+          customGeneratedBy:          leadDto.customGeneratedBy,
+          leadStatus:                 leadDto.leadStatus || LeadStatus.NEW,
+          leadCreatedBy:              leadDto.leadCreatedBy,
+          additionalNotes:            leadDto.additionalNotes,
+          sector:                     leadDto.sector,
+          customSector:               leadDto.customSector,
+          userId:                     effectiveUserId,
         };
 
-        // If sector is provided, save it to custom_sectors table (if it's not already there)
         if (leadDto.sector) {
           await this.saveCustomSector(leadDto.sector);
         }
 
-        const lead = this.leadRepository.create(leadData);
+        const lead      = this.leadRepository.create(leadData);
         const savedLead = await this.leadRepository.save(lead);
 
-        // Reload with user relation
         const leadWithUser = await this.leadRepository.findOne({
           where: { id: savedLead.id },
           relations: ['user'],
@@ -647,29 +685,15 @@ export class LeadsService {
 
         if (leadWithUser) {
           const lastContactedByUserMap = await this.resolveLastContactedByUserMap([leadWithUser]);
-          results.push({
-            success: true,
-            lead: this.mapToResponseDto(leadWithUser, lastContactedByUserMap),
-            rowNumber,
-          });
+          results.push({ success: true, lead: this.mapToResponseDto(leadWithUser, lastContactedByUserMap), rowNumber });
           successful++;
         } else {
-          results.push({
-            success: false,
-            error: 'Failed to load created lead',
-            rowNumber,
-          });
+          results.push({ success: false, error: 'Failed to load created lead', rowNumber });
           failed++;
         }
       } catch (error: any) {
-        // Handle duplicate email or other errors
-        const errorMessage =
-          error.message || error.detail || 'Failed to create lead';
-        results.push({
-          success: false,
-          error: errorMessage,
-          rowNumber,
-        });
+        const errorMessage = error.message || error.detail || 'Failed to create lead';
+        results.push({ success: false, error: errorMessage, rowNumber });
         failed++;
       }
     }
@@ -678,6 +702,7 @@ export class LeadsService {
       total: leads.length,
       successful,
       failed,
+      duplicates,
       results,
     };
   }
